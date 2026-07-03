@@ -273,7 +273,7 @@ class PartDefect(Base):
     part_id: Mapped[int] = mapped_column(
         ForeignKey("parts.part_id", ondelete="CASCADE"), nullable=False, index=True
     )
-     defects: Mapped[Optional[dict]] = mapped_column(JSONB)   # {"dent": true, "scratch": false}
+    defects: Mapped[Optional[dict]] = mapped_column(JSONB)   # {"dent": true, "scratch": false}
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

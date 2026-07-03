@@ -1,0 +1,12 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+.env
+# node
+node_modules/
+dist/
+# models / data
+backend/models/*.pt
+*.db-wal
+*.db-shm

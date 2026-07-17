@@ -15,6 +15,7 @@ from app.routers.auth import router as auth_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.routers import router
 from app.services.model_linking import sync_models_from_yaml
+from app.models.db import SessionLocal
 
 app = FastAPI(title=settings.APP_NAME)
 
@@ -38,10 +39,14 @@ app.include_router(router)
 @app.get("/", tags=["system"])
 def root() -> dict:
     return {"app": settings.APP_NAME, "docs": "/docs"}
-    
+
 
 @app.on_event("startup")
 def load_models():
+    import os
+    if not os.path.exists("config.yaml"):
+        print("config.yaml not found — skipping model sync")
+        return
     db = SessionLocal()
     try:
         sync_models_from_yaml(db, "config.yaml")

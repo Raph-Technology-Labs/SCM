@@ -1,45 +1,72 @@
-import { Navigate, Route, Routes } from "react-router-dom";
-import { useAuth } from "./auth/AuthContext";
-import Layout from "./components/Layout";
+import { useState, useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { ToastContainer } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
-import PartsPage from "./pages/PartsPage";
-import AddPartPage from "./pages/AddPartPage";
-import AIModelsPage from "./pages/AIModelsPage";
-import SessionsPage from "./pages/SessionsPage";
+import Layout from "./components/Layout";
+import NewSession from "./pages/NewSession";
+import PartSelection from "./pages/PartSelection"
+import CountingPage from "./pages/CountingPage";
+import MeasurementPage from "./pages/MeasurementPage";
+import AddNewPart from "./pages/AddNewPart";
+import TechnicalSupport from "./pages/TechnicalSupport";
+import { SessionProvider } from "./context/SessionContext";
+import DefectDetectionPage from "./pages/DefectDetectionPage";
 
-function Protected({ children }) {
-  const { user, ready } = useAuth();
-  if (!ready) return null;
-  if (!user) return <Navigate to="/login" replace />;
-  return children;
-}
+const Page = ({ title }) => <div style={{ padding: 32 }}><h1>{title}</h1></div>;
 
-function AdminOnly({ children }) {
-  const { isAdmin } = useAuth();
-  if (!isAdmin) return <Navigate to="/parts" replace />;
-  return children;
-}
+export default function App() { 
+  // 1. On first load, read any saved login from localStorage
+  const [loginData, setLoginData] = useState(() => {
+    const saved = localStorage.getItem("scm_user");
+    return saved ? JSON.parse(saved) : null;
+  });
 
-export default function App() {
+  // 2. Whenever loginData changes, save it (or clear it on logout)
+  useEffect(() => {
+    if (loginData) localStorage.setItem("scm_user", JSON.stringify(loginData));
+    else localStorage.removeItem("scm_user");
+  }, [loginData]);
+
+  const handleLogout = () => setLoginData(null);  
+
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route
-        element={
-          <Protected>
-            <Layout />
-          </Protected>
-        }
-      >
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/parts" element={<PartsPage />} />
-        <Route path="/parts/new" element={<AdminOnly><AddPartPage /></AdminOnly>} />
-        <Route path="/ai-models" element={<AIModelsPage />} />
-        <Route path="/sessions" element={<SessionsPage />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <SessionProvider>
+    <BrowserRouter>
+    {/* Single global toast container, standard color scheme
+          (green = success, red = error, orange = warning, blue = info).
+          Every page just calls toast.success/error/warn/info — no
+          per-page <ToastContainer /> needed anymore. */}
+      <ToastContainer position="top-right" autoClose={3000} theme="colored" />
+
+      <Routes>
+        <Route path="/login" element={<Login onLogin={setLoginData} />} />
+        <Route
+          element={
+            loginData ? (
+              <Layout loginData={loginData} onLogout={handleLogout} />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        >
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Page title="Dashboard" />} />
+          <Route path="/part-details" element={<Page title="Part Details" />} />
+          <Route path="/health-check" element={<Page title="Health Check" />} />
+          <Route path="/device-settings" element={<Page title="Device Settings" />} />
+          <Route path="/add-part" element={<AddNewPart loginData={loginData} />} />
+          <Route path="/mode-selection" element={<NewSession />}/>
+          <Route path="/part-selection" element={<PartSelection />} />
+          <Route path="/technical-support" element={<TechnicalSupport />} />
+          <Route path="/measurement/:sessionId" element={<MeasurementPage />} />
+          <Route path="/counting/:sessionId" element={<CountingPage />} />
+          <Route path="/defect-detection/:sessionId" element={<DefectDetectionPage />} />
+          <Route path="/technical-support" element={<Page title="Technical Support" />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+    </SessionProvider>
   );
 }

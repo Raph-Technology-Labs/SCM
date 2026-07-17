@@ -142,7 +142,7 @@ class AIModel(Base):
         back_populates="ai_model", passive_deletes=True
     )
     # in class AIModel  (db.py)
-    defects: Mapped[Optional[list]] = mapped_column(JSONB)   # ["thread_missing","dent",...]
+    defects: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)   # ["thread_missing","dent",...]
 
 
 class Part(Base):
@@ -191,6 +191,10 @@ class Part(Base):
     part_length: Mapped[Optional[float]] = mapped_column(Float)
     part_angle: Mapped[Optional[float]] = mapped_column(Float)
     part_arch_length: Mapped[Optional[float]] = mapped_column(Float)
+    part_sector:  Mapped[Optional[float]] = mapped_column(Float)  
+
+    # dynamic measurement template (min/max/camera per parameter)
+    measurement_parameters: Mapped[Optional[dict]] = mapped_column(JSONB)
 
     # boolean flags
     part_co_planarity: Mapped[bool] = mapped_column(nullable=False, server_default="false")

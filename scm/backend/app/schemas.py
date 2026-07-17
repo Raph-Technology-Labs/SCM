@@ -18,7 +18,7 @@ class AIModelCreate(BaseModel):
 
     # allow the 'model_' prefixed field names (pydantic reserves 'model_' by default)
     model_config = ConfigDict(protected_namespaces=())
-    defects: Optional[list[str]] = None      # ["thread_missing", "dent", ...]
+    defects: Optional[dict[str, Any]] = None    # {"dent": {"threshold": 0.6, "camera": 2}}
 
 
 
@@ -50,6 +50,8 @@ class PartCreate(BaseModel):
     part_parallelity: bool = False
     part_concentricity: bool = False
     mode_of_operation: str = "Counting"
+    part_sector: Optional[float] = None
+    measurement_parameters: Optional[dict[str, Any]] = None
 
     model_config = ConfigDict(protected_namespaces=())
 
@@ -61,6 +63,12 @@ class PartOut(BaseModel):
     category_id: Optional[int] = None
     ai_model_id: Optional[int] = None
     mode_of_operation: str
+    parts_metadata: Optional[str] = None  
+    part_sector: Optional[float] = None
+    measurement_parameters: Optional[dict[str, Any]] = None
+    part_length: Optional[float] = None
+    part_angle: Optional[float] = None
+    part_arch_length: Optional[float] = None
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
 
@@ -86,4 +94,21 @@ class PartDefectOut(BaseModel):
     part_code: Optional[str] = None      # echoed back for convenience
     defects: Optional[dict[str, Any]] = None
     model_config = ConfigDict(from_attributes=True)
-    
+
+
+class MeasurementLimit(BaseModel):
+    min_value: float
+    max_value: float
+    camera: Optional[int] = None
+    cam_factor: Optional[str] = None
+
+class DefectConfig(BaseModel):
+    threshold: Optional[float] = None
+    camera: Optional[int] = None
+
+# parts.measurement_parameters shape:
+#   { "part_length": [MeasurementLimit, ...], "part_width": [...] }
+#
+# ai_models.defects shape:
+#   { "dent": DefectConfig, "scratch": DefectConfig }
+

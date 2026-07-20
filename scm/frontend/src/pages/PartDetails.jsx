@@ -224,7 +224,6 @@ export default function PartDetails({ loginData }) {
     const payload = {
       part_name: editPart.part_name,
       parts_metadata: editPart.parts_metadata || null,
-      model_name: editPart.model_name || null,
       image: editPart.image || null,
       part_weight: num(editPart.part_weight),
       part_height: num(editPart.part_height),
@@ -464,12 +463,12 @@ export default function PartDetails({ loginData }) {
                     value={editPart.part_code || ""} />
                   <TextField label="Category" fullWidth disabled variant="filled"
                     value={editPart.category_name || ""} />
+                     <TextField label="AI Model Name (reference)" fullWidth disabled variant="filled"
+                  value={editPart.model_name || ""} />
                 </Stack>
                 <TextField label="Parts Metadata" fullWidth sx={inputSx}
                   value={editPart.parts_metadata || ""} onChange={setEditField("parts_metadata")} />
-                <TextField label="AI Model Name (reference)" fullWidth sx={inputSx}
-                  helperText="A developer links the actual AI model to this name."
-                  value={editPart.model_name || ""} onChange={setEditField("model_name")} />
+               
               </Stack>
             </Box>
 

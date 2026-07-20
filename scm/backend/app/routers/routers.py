@@ -19,6 +19,7 @@ import json
 import io
 import logging
 import os
+import base64
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -50,6 +51,7 @@ from app.schemas import (
     PartDefectIn,
     PartDefectOut,
     PartOut,
+    PartUpdate,   
     ImportResult,
 )
 from app.services.spreadsheet_importer import SpreadsheetCsvImporter, SpreadsheetExcelImporter
@@ -1365,3 +1367,94 @@ def print_label(request: dict, db: Session = Depends(get_db)):
 
 
 import asyncio  # placed here to keep the notifier() coroutine above self-contained
+
+# ---- routers.py ----
+
+def _part_row(part: Part, db: Session) -> dict:
+    """Flat dict for the Part Details table / edit dialog."""
+    model_name = None
+    if part.ai_model_id:
+        m = db.get(AIModel, part.ai_model_id)
+        model_name = m.model_name if m else None
+    return {
+        "part_id": part.part_id,
+        "part_code": part.part_code,
+        "part_name": part.part_name,
+        "category_id": part.category_id,
+        "category_name": part.category.category_name if part.category else None,
+        "parts_metadata": part.parts_metadata,
+        "model_name": model_name,
+        "image": part.image.decode("utf-8") if part.image else None,
+        "part_weight": part.part_weight,
+        "part_height": part.part_height,
+        "part_width": part.part_width,
+        "part_inner_diameter": part.part_inner_diameter,
+        "part_outer_diameter": part.part_outer_diameter,
+        "part_length": part.part_length,
+        "part_angle": part.part_angle,
+        "part_arch_length": part.part_arch_length,
+        "part_sector": part.part_sector,
+        "part_co_planarity": part.part_co_planarity,
+        "part_parallelity": part.part_parallelity,
+        "part_concentricity": part.part_concentricity,
+        "measurement_parameters": part.measurement_parameters,
+    }
+
+
+@router.get("/parts/by-category")
+def parts_by_category(
+    category_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+):
+    q = db.query(Part)
+    if category_id:
+        q = q.filter(Part.category_id == category_id)
+    return [_part_row(p, db) for p in q.order_by(Part.part_id).all()]
+
+
+@router.put("/parts/{part_id}")
+def update_part(part_id: int, payload: PartUpdate, db: Session = Depends(get_db)):
+    part = db.query(Part).filter(Part.part_id == part_id).first()
+    if not part:
+        raise HTTPException(status_code=404, detail="Part not found")
+
+    data = payload.model_dump(exclude_unset=True)
+
+    # model_name -> ai_model_id (case-insensitive, creates stub if new)
+    if "model_name" in data:
+        part.ai_model_id = _resolve_ai_model_id(db, data.pop("model_name"), None)
+
+    if "image" in data:
+        img = data.pop("image")
+        part.image = img.encode("utf-8") if img else None
+
+    for k, v in data.items():
+        setattr(part, k, v)
+
+    db.commit()
+    db.refresh(part)
+    return _part_row(part, db)
+
+
+@router.get("/download-parts-data")
+def download_parts_data(db: Session = Depends(get_db)):
+    rows = []
+    for p in db.query(Part).order_by(Part.part_id).all():
+        r = _part_row(p, db)
+        r.pop("image", None)                      # don't dump base64 into Excel
+        mp = r.pop("measurement_parameters", None) or {}
+        for param, limits in mp.items():
+            if limits:
+                r[f"{param}_min"] = limits[0].get("min_value")
+                r[f"{param}_max"] = limits[0].get("max_value")
+        rows.append(r)
+
+    df = pd.DataFrame(rows if rows else [{"Message": "No parts found"}])
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = f"parts_export_{ts}.xlsx"
+    df.to_excel(path, index=False, engine="openpyxl")
+    return FileResponse(
+        path,
+        filename=path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )

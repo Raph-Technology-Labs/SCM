@@ -72,6 +72,30 @@ class PartOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
 
+class PartUpdate(BaseModel):
+    """Partial update for an existing part — every field optional so the
+    frontend can send only what changed (used with exclude_unset=True)."""
+    part_name: Optional[str] = None
+    parts_metadata: Optional[str] = None
+    model_name: Optional[str] = None            # resolved to ai_model_id
+    image: Optional[str] = None                 # data URL string
+    part_weight: Optional[float] = None
+    part_height: Optional[float] = None
+    part_width: Optional[float] = None
+    part_inner_diameter: Optional[float] = None
+    part_outer_diameter: Optional[float] = None
+    part_length: Optional[float] = None
+    part_angle: Optional[float] = None
+    part_arch_length: Optional[float] = None
+    part_sector: Optional[float] = None
+    part_co_planarity: Optional[bool] = None
+    part_parallelity: Optional[bool] = None
+    part_concentricity: Optional[bool] = None
+    measurement_parameters: Optional[dict[str, Any]] = None
+
+    model_config = ConfigDict(protected_namespaces=())
+
+
 # ---- Excel import ----------------------------------------------------------
 class ImportResult(BaseModel):
     created_parts: int

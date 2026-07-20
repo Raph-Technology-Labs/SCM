@@ -9,6 +9,7 @@ import PartSelection from "./pages/PartSelection"
 import CountingPage from "./pages/CountingPage";
 import MeasurementPage from "./pages/MeasurementPage";
 import AddNewPart from "./pages/AddNewPart";
+import PartDetails from "./pages/PartDetails";
 import TechnicalSupport from "./pages/TechnicalSupport";
 import { SessionProvider } from "./context/SessionContext";
 import DefectDetectionPage from "./pages/DefectDetectionPage";
@@ -52,7 +53,6 @@ export default function App() {
         >
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Page title="Dashboard" />} />
-          <Route path="/part-details" element={<Page title="Part Details" />} />
           <Route path="/health-check" element={<Page title="Health Check" />} />
           <Route path="/device-settings" element={<Page title="Device Settings" />} />
           <Route path="/add-part" element={<AddNewPart loginData={loginData} />} />
@@ -61,6 +61,7 @@ export default function App() {
           <Route path="/technical-support" element={<TechnicalSupport />} />
           <Route path="/measurement/:sessionId" element={<MeasurementPage />} />
           <Route path="/counting/:sessionId" element={<CountingPage />} />
+          <Route path="/part-details" element={<PartDetails loginData={loginData} />} />
           <Route path="/defect-detection/:sessionId" element={<DefectDetectionPage />} />
           <Route path="/technical-support" element={<Page title="Technical Support" />} />
         </Route>

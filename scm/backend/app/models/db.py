@@ -124,26 +124,6 @@ class Category(Base):
     parts: Mapped[list["Part"]] = relationship(back_populates="category")
 
 
-class AIModel(Base):
-    __tablename__ = "ai_models"
-
-    model_id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    model_name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)  # 'bolt'
-    model_path: Mapped[Optional[str]] = mapped_column(Text)                     # 'bolt.pt'
-    model_type: Mapped[Optional[str]] = mapped_column(Text)
-    description: Mapped[Optional[str]] = mapped_column(Text)
-    model_metadata: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
-    is_active: Mapped[bool] = mapped_column(nullable=False, server_default="true")
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-
-    parts: Mapped[list["Part"]] = relationship(
-        back_populates="ai_model", passive_deletes=True
-    )
-    # in class AIModel  (db.py)
-    defects: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)   # ["thread_missing","dent",...]
-
 
 class Part(Base):
     __tablename__ = "parts"
@@ -161,10 +141,6 @@ class Part(Base):
     category_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("categories.category_id", ondelete="SET NULL")
     )
-    # link a part to its AI model (add-item page / Excel import: "bolt" -> bolt.pt)
-    ai_model_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("ai_models.model_id", ondelete="SET NULL"), index=True
-    )
 
     parts_metadata: Mapped[Optional[str]] = mapped_column(Text)
     created_by: Mapped[Optional[int]] = mapped_column(
@@ -175,26 +151,63 @@ class Part(Base):
     )
     image: Mapped[Optional[bytes]] = mapped_column(BYTEA)
 
+    # weight is the ONE dimension that stays a plain fixed field — single
+    # value, no instances, no min/max, no calibration factor.
+
     # basic dimensions
     part_weight: Mapped[Optional[float]] = mapped_column(Float)
-    part_height: Mapped[Optional[float]] = mapped_column(Float)
-    part_width: Mapped[Optional[float]] = mapped_column(Float)
+
+    # part_height: Mapped[Optional[float]] = mapped_column(Float)
+    # part_width: Mapped[Optional[float]] = mapped_column(Float)
 
     # diameter structure
-    part_inner_diameter: Mapped[Optional[float]] = mapped_column(Float)
-    part_outer_diameter: Mapped[Optional[float]] = mapped_column(Float)
+    # part_inner_diameter: Mapped[Optional[float]] = mapped_column(Float)
+    # part_outer_diameter: Mapped[Optional[float]] = mapped_column(Float)
 
     # master measurement config (JSON)
-    actual_measurement_data: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
+    # actual_measurement_data: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB)
 
     # additional measurements
-    part_length: Mapped[Optional[float]] = mapped_column(Float)
-    part_angle: Mapped[Optional[float]] = mapped_column(Float)
-    part_arch_length: Mapped[Optional[float]] = mapped_column(Float)
-    part_sector:  Mapped[Optional[float]] = mapped_column(Float)  
+    # part_length: Mapped[Optional[float]] = mapped_column(Float)
+    # part_angle: Mapped[Optional[float]] = mapped_column(Float)
+    # part_arch_length: Mapped[Optional[float]] = mapped_column(Float)
+    # part_sector:  Mapped[Optional[float]] = mapped_column(Float)  
+
+    # ---------------------------------------------------------------------
+    # SINGLE SOURCE OF TRUTH for every other dimensional parameter.
+    # No more fixed part_length / part_width / part_height / part_inner_
+    # diameter / part_outer_diameter / part_angle / part_arch_length /
+    # part_sector columns — all of that now lives here, as unlimited
+    # numbered instances per family:
+    #
+    #   {
+    #     "length1": {"value": 40.0, "min_value": 39.5, "max_value": 40.5,
+    #                 "calibration_factor": 1.002},
+    #     "length2": {"value": 12.0, "min_value": 11.5, "max_value": 12.5},
+    #     "width1":  {"value": 8.0},
+    #     "od1":     {"value": 6.2, "min_value": 6.0, "max_value": 6.4}
+    #   }
+    #
+    # Recognized family prefixes: length, width, height, id (inner diameter),
+    # od (outer diameter), angle, arch, sector. Instance numbers (1, 2, 3, ...)
+    # are unbounded. Every field inside an instance (value / min_value /
+    # max_value / calibration_factor) is optional and independent.
+    # ---------------------------------------------------------------------
 
     # dynamic measurement template (min/max/camera per parameter)
     measurement_parameters: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+    # ---------------------------------------------------------------------
+    # Defect CONFIG for this part — same generalized/numbered-instance
+    # pattern as measurement_parameters:
+    #   { "d1": {"defect_name": "dent",    "confidence_threshold": 0.6},
+    #     "d2": {"defect_name": "scratch", "confidence_threshold": 0.75} }
+    # Instance numbers (1, 2, 3, ...) are unbounded. Only meaningful when
+    # mode_of_operation == "Defect Detection", but not enforced at the DB
+    # level. Actual pass/fail RESULTS per inspected unit live in
+    # PartDefect.defects, keyed the same way (e.g. {"d1": "NOK", "d2": "OK"}).
+    # ---------------------------------------------------------------------
+    defect_parameters: Mapped[Optional[dict]] = mapped_column(JSONB)
 
     # boolean flags
     part_co_planarity: Mapped[bool] = mapped_column(nullable=False, server_default="false")
@@ -207,7 +220,6 @@ class Part(Base):
     )
 
     category: Mapped[Optional["Category"]] = relationship(back_populates="parts")
-    ai_model: Mapped[Optional["AIModel"]] = relationship(back_populates="parts")
     creator: Mapped[Optional["User"]] = relationship(back_populates="parts")
     sessions: Mapped[list["CompanySession"]] = relationship(back_populates="part")
     defects: Mapped[list["PartDefect"]] = relationship(

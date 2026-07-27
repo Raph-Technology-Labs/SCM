@@ -14,7 +14,7 @@ import yaml
 from sqlalchemy.orm import Session
 
 from app.inference import resolve_model_filename
-from app.models.db import AIModel
+
 
 
 def get_or_create_model(

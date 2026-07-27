@@ -43,10 +43,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.models.db import AIModel, Category, CompanySession, Part, PartDefect, get_db
+from app.models.db import Category, CompanySession, Part, PartDefect, get_db
 from app.schemas import (
-    AIModelCreate,
-    AIModelOut,
     PartCreate,
     PartDefectIn,
     PartDefectOut,
@@ -190,54 +188,39 @@ async def add_part(
     part_code: str = Form(...),
     category_id: Optional[int] = Form(None),
     category_name: Optional[str] = Form(None),
-    model_name: Optional[str] = Form(None),          
     parts_metadata: Optional[str] = Form(None),
     part_weight: Optional[str] = Form(None),
-    part_height: Optional[str] = Form(None),
-    part_width: Optional[str] = Form(None),
-    part_inner_diameter: Optional[str] = Form(None),
-    part_outer_diameter: Optional[str] = Form(None),
-    part_length: Optional[str] = Form(None),
-    part_angle: Optional[str] = Form(None),
-    part_arch_length: Optional[str] = Form(None),
-    part_sector: Optional[str] = Form(None),
+    mode_of_operation: str = Form("Counting"),
     part_co_planarity: str = Form("false"),
     part_parallelity: str = Form("false"),
     part_concentricity: str = Form("false"),
     measurement_parameters: Optional[str] = Form(None),   # JSON string
+    defect_parameters: Optional[str] = Form(None),        # JSON string
     image: UploadFile = File(None),
     db: Session = Depends(get_db),
 ):
+    if mode_of_operation not in VALID_MODES:
+        raise HTTPException(status_code=400, detail=f"Invalid mode_of_operation: {mode_of_operation}")
 
     if db.query(Part).filter(Part.part_code == part_code.strip()).first():
         raise HTTPException(status_code=409, detail="part_code already exists")
 
     category = _resolve_category(db, category_id, category_name)
-    ai_model_id = _resolve_ai_model_id(db, model_name, None)   # reuses your helper
     image_data = _encode_part_image(image)
 
     part = Part(
         part_code=part_code.strip(),
         part_name=part_name.strip(),
         category_id=category.category_id,
-        ai_model_id=ai_model_id,
         parts_metadata=parts_metadata,
         image=image_data.encode("utf-8") if image_data else None,
         part_weight=_safe_float(part_weight),
-        part_height=_safe_float(part_height),
-        part_width=_safe_float(part_width),
-        part_inner_diameter=_safe_float(part_inner_diameter),
-        part_outer_diameter=_safe_float(part_outer_diameter),
-        part_length=_safe_float(part_length),
-        part_angle=_safe_float(part_angle),
-        part_arch_length=_safe_float(part_arch_length),
-        part_sector=_safe_float(part_sector),
+        mode_of_operation=mode_of_operation,
         part_co_planarity=_as_bool(part_co_planarity),
         part_parallelity=_as_bool(part_parallelity),
         part_concentricity=_as_bool(part_concentricity),
-        measurement_parameters=_parse_json_form(
-            measurement_parameters, "measurement_parameters"
-        ),
+        measurement_parameters=_parse_json_form(measurement_parameters, "measurement_parameters"),
+        defect_parameters=_parse_json_form(defect_parameters, "defect_parameters"),
     )
     db.add(part)
     db.commit()
@@ -248,7 +231,6 @@ async def add_part(
         "part_id": part.part_id,
         "part_code": part.part_code,
         "category_id": category.category_id,
-        "ai_model_id": part.ai_model_id,
         "mode_of_operation": part.mode_of_operation,
     }
 
@@ -264,7 +246,7 @@ async def bulk_upload_parts(file: UploadFile = File(...), db: Session = Depends(
     else:
         raise HTTPException(status_code=400, detail="Only CSV or Excel files are supported")
 
-    created_parts = created_models = linked_parts = 0
+    created_parts = linked_parts = 0
     errors = list(errors)
 
     for r in rows:
@@ -285,44 +267,24 @@ async def bulk_upload_parts(file: UploadFile = File(...), db: Session = Depends(
                     db.add(category)
                     db.flush()
 
-            model_id = None
-            if r.model_name:
-                m = (
-                    db.query(AIModel)
-                    .filter(AIModel.model_name.ilike(r.model_name))
-                    .first()
-                )
-                if not m:
-                    m = AIModel(model_name=r.model_name, model_path=f"{r.model_name}.pt")
-                    db.add(m)
-                    db.flush()
-                    created_models += 1
-                model_id = m.model_id
-                linked_parts += 1
-
             db.add(
                 Part(
                     part_code=r.part_code,
                     part_name=r.part_name or r.part_code,
                     category_id=category.category_id if category else None,
-                    ai_model_id=model_id,
                     image=r.image.encode("utf-8") if r.image else None,
                     part_weight=r.part_weight,
-                    part_height=r.part_height,
-                    part_width=r.part_width,
-                    part_inner_diameter=r.part_inner_diameter,
-                    part_outer_diameter=r.part_outer_diameter,
-                    part_length=r.part_length,
-                    part_angle=r.part_angle,
-                    part_arch_length=r.part_arch_length,
-                    part_sector=r.part_sector,
+                    mode_of_operation=r.mode_of_operation,
                     part_co_planarity=bool(r.part_co_planarity),
                     part_parallelity=bool(r.part_parallelity),
                     part_concentricity=bool(r.part_concentricity),
                     measurement_parameters=r.measurement_parameters,
+                    defect_parameters=r.defect_parameters,
                 )
             )
             created_parts += 1
+            if r.defect_parameters:
+                linked_parts += 1  # now means "parts with defect config set"
             db.flush()
         except Exception as e:
             db.rollback()
@@ -331,7 +293,6 @@ async def bulk_upload_parts(file: UploadFile = File(...), db: Session = Depends(
     db.commit()
     return ImportResult(
         created_parts=created_parts,
-        created_models=created_models,
         linked_parts=linked_parts,
         errors=errors,
     )
@@ -752,36 +713,36 @@ def delete_part(part_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # AI models
 # ---------------------------------------------------------------------------
-@router.post("/ai-models", response_model=AIModelOut)
-def add_ai_model(payload: AIModelCreate, db: Session = Depends(get_db)):
-    if db.query(AIModel).filter(AIModel.model_name == payload.model_name).first():
-        raise HTTPException(status_code=409, detail=f"Model '{payload.model_name}' already exists")
-    model = AIModel(
-        model_name=payload.model_name,
-        model_path=payload.model_path or f"{payload.model_name}.pt",
-        model_type=payload.model_type,
-        description=payload.description,
-        model_metadata=payload.model_metadata,
-        is_active=payload.is_active,
-        defects=payload.defects,
-    )
-    db.add(model)
-    db.commit()
-    db.refresh(model)
-    return model
+# @router.post("/ai-models", response_model=AIModelOut)
+# def add_ai_model(payload: AIModelCreate, db: Session = Depends(get_db)):
+#     if db.query(AIModel).filter(AIModel.model_name == payload.model_name).first():
+#         raise HTTPException(status_code=409, detail=f"Model '{payload.model_name}' already exists")
+#     model = AIModel(
+#         model_name=payload.model_name,
+#         model_path=payload.model_path or f"{payload.model_name}.pt",
+#         model_type=payload.model_type,
+#         description=payload.description,
+#         model_metadata=payload.model_metadata,
+#         is_active=payload.is_active,
+#         defects=payload.defects,
+#     )
+#     db.add(model)
+#     db.commit()
+#     db.refresh(model)
+#     return model
 
 
-@router.get("/ai-models", response_model=list[AIModelOut])
-def list_ai_models(db: Session = Depends(get_db)):
-    return db.query(AIModel).order_by(AIModel.model_id).all()
+# @router.get("/ai-models", response_model=list[AIModelOut])
+# def list_ai_models(db: Session = Depends(get_db)):
+#     return db.query(AIModel).order_by(AIModel.model_id).all()
 
 
-@router.get("/ai-model/{model_id}", response_model=AIModelOut)
-def get_ai_model(model_id: int, db: Session = Depends(get_db)):
-    model = db.get(AIModel, model_id)
-    if not model:
-        raise HTTPException(status_code=404, detail="AI model not found")
-    return model
+# @router.get("/ai-model/{model_id}", response_model=AIModelOut)
+# def get_ai_model(model_id: int, db: Session = Depends(get_db)):
+#     model = db.get(AIModel, model_id)
+#     if not model:
+#         raise HTTPException(status_code=404, detail="AI model not found")
+#     return model
 
 
 # ---------------------------------------------------------------------------

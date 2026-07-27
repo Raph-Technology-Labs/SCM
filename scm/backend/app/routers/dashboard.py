@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy import Integer, case, cast, func
 from sqlalchemy.orm import Session
 
-from app.models.db import AIModel, CompanySession, Part, PartDefect, SessionLocal, get_db
+from app.models.db import CompanySession, Part, PartDefect, SessionLocal, get_db
 
 router = APIRouter(tags=["dashboard"])
 

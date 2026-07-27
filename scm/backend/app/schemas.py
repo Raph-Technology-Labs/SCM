@@ -7,51 +7,31 @@ from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict
 
 
-# ---- AI models -------------------------------------------------------------
-class AIModelCreate(BaseModel):
-    model_name: str                      # e.g. 'bolt'  (the linking name)
-    model_path: Optional[str] = None     # e.g. 'bolt.pt' (defaults to <name>.pt)
-    model_type: Optional[str] = None
-    description: Optional[str] = None
-    model_metadata: Optional[dict[str, Any]] = None
-    is_active: bool = True
-
-    # allow the 'model_' prefixed field names (pydantic reserves 'model_' by default)
-    model_config = ConfigDict(protected_namespaces=())
-    defects: Optional[dict[str, Any]] = None    # {"dent": {"threshold": 0.6, "camera": 2}}
-
-
-
-class AIModelOut(AIModelCreate):
-    model_id: int
-    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
-
-
-# ---- Parts -----------------------------------------------------------------
+# ---- Parts -------------------------------------------------------------
 class PartCreate(BaseModel):
     part_code: str
     part_name: str
     category_id: Optional[int] = None
-    # link by name (resolved to ai_model_id) OR pass ai_model_id directly
-    model_name: Optional[str] = None
-    ai_model_id: Optional[int] = None
 
     parts_metadata: Optional[str] = None
     part_weight: Optional[float] = None
-    part_height: Optional[float] = None
-    part_width: Optional[float] = None
-    part_inner_diameter: Optional[float] = None
-    part_outer_diameter: Optional[float] = None
-    actual_measurement_data: Optional[dict[str, Any]] = None
-    part_length: Optional[float] = None
-    part_angle: Optional[float] = None
-    part_arch_length: Optional[float] = None
+
     part_co_planarity: bool = False
     part_parallelity: bool = False
     part_concentricity: bool = False
     mode_of_operation: str = "Counting"
-    part_sector: Optional[float] = None
+
+    # single source of truth for every dimensional parameter — unlimited
+    # numbered instances per family, e.g.
+    #   { "length1": {"value":40.0,"min_value":39.5,"max_value":40.5,
+    #                 "calibration_factor":1.002},
+    #     "length2": {...}, "width1": {...}, "od1": {...} }
     measurement_parameters: Optional[dict[str, Any]] = None
+
+    # defect config for this part — unlimited numbered instances, e.g.
+    #   { "d1": {"defect_name":"dent","confidence_threshold":0.6},
+    #     "d2": {"defect_name":"scratch","confidence_threshold":0.75} }
+    defect_parameters: Optional[dict[str, Any]] = None
 
     model_config = ConfigDict(protected_namespaces=())
 
@@ -61,14 +41,11 @@ class PartOut(BaseModel):
     part_code: str
     part_name: str
     category_id: Optional[int] = None
-    ai_model_id: Optional[int] = None
     mode_of_operation: str
-    parts_metadata: Optional[str] = None  
-    part_sector: Optional[float] = None
+    parts_metadata: Optional[str] = None
+    part_weight: Optional[float] = None
     measurement_parameters: Optional[dict[str, Any]] = None
-    part_length: Optional[float] = None
-    part_angle: Optional[float] = None
-    part_arch_length: Optional[float] = None
+    defect_parameters: Optional[dict[str, Any]] = None
     model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
 
@@ -77,21 +54,13 @@ class PartUpdate(BaseModel):
     frontend can send only what changed (used with exclude_unset=True)."""
     part_name: Optional[str] = None
     parts_metadata: Optional[str] = None
-    model_name: Optional[str] = None            # resolved to ai_model_id
     image: Optional[str] = None                 # data URL string
     part_weight: Optional[float] = None
-    part_height: Optional[float] = None
-    part_width: Optional[float] = None
-    part_inner_diameter: Optional[float] = None
-    part_outer_diameter: Optional[float] = None
-    part_length: Optional[float] = None
-    part_angle: Optional[float] = None
-    part_arch_length: Optional[float] = None
-    part_sector: Optional[float] = None
     part_co_planarity: Optional[bool] = None
     part_parallelity: Optional[bool] = None
     part_concentricity: Optional[bool] = None
     measurement_parameters: Optional[dict[str, Any]] = None
+    defect_parameters: Optional[dict[str, Any]] = None
 
     model_config = ConfigDict(protected_namespaces=())
 
@@ -99,17 +68,15 @@ class PartUpdate(BaseModel):
 # ---- Excel import ----------------------------------------------------------
 class ImportResult(BaseModel):
     created_parts: int
-    created_models: int
     linked_parts: int
     errors: list[str] = []
 
 
-# schemas.py
-
+# ---- Defect results (runtime, per inspected unit) ---------------------------
 class PartDefectIn(BaseModel):
     session_id: int
     part_code: str                       # human key — resolved to part_id in the endpoint
-    defects: dict[str, bool]             # {"dent": true, "scratch": false}
+    defects: dict[str, str]              # {"d1": "OK", "d2": "NOK"} — keyed to match Part.defect_parameters
 
 class PartDefectOut(BaseModel):
     id: int
@@ -120,19 +87,20 @@ class PartDefectOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class MeasurementLimit(BaseModel):
-    min_value: float
-    max_value: float
-    camera: Optional[int] = None
-    cam_factor: Optional[str] = None
-
-class DefectConfig(BaseModel):
-    threshold: Optional[float] = None
-    camera: Optional[int] = None
-
+# ---- Reference shapes (illustrative only — not enforced at the API layer) --
 # parts.measurement_parameters shape:
-#   { "part_length": [MeasurementLimit, ...], "part_width": [...] }
+#   { "length1": {"value":.., "min_value":.., "max_value":.., "calibration_factor":..},
+#     "length2": {...}, "width1": {...}, "height1": {...},
+#     "id1": {...} (inner diameter), "od1": {...} (outer diameter),
+#     "angle1": {...}, "arch1": {...}, "sector1": {...} }
+#   Family prefixes: length, width, height, id, od, angle, arch, sector.
+#   Instance numbers (1, 2, 3, ...) are unbounded; every field inside an
+#   instance is optional and independent of the others.
 #
-# ai_models.defects shape:
-#   { "dent": DefectConfig, "scratch": DefectConfig }
-
+# parts.defect_parameters shape (CONFIG — what to check, not a result):
+#   { "d1": {"defect_name": "dent", "confidence_threshold": 0.6},
+#     "d2": {"defect_name": "scratch", "confidence_threshold": 0.75} }
+#
+# part_defects.defects shape (RESULT — written per inspected unit, keyed to
+# match parts.defect_parameters):
+#   { "d1": "NOK", "d2": "OK" }

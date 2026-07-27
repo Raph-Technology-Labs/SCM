@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.config import settings
-from app.models.db import AIModel, Part
+from app.models.db import Part
 
 MODELS_DIR = Path(settings.MODELS_DIR)
 

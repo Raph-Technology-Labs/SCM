@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   Box, Button, Typography, TextField, Divider, IconButton,
-  FormControlLabel, Checkbox, Dialog, DialogTitle, DialogContent,
-  DialogActions, Chip, Stack, InputAdornment,
+  FormControlLabel, Checkbox, Chip, Stack, InputAdornment, MenuItem,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import axios from "axios";
@@ -12,21 +11,17 @@ import "react-toastify/dist/ReactToastify.css";
 
 const BASE = import.meta.env.VITE_BASE_URL || "";
 
-const DIMENSION_FIELDS = [
-  { key: "part_weight", label: "Weight", unit: "g" },
-  { key: "part_height", label: "Height", unit: "mm" },
-  { key: "part_width", label: "Width", unit: "mm" },
-  { key: "part_inner_diameter", label: "Inner Diameter", unit: "mm" },
-  { key: "part_outer_diameter", label: "Outer Diameter", unit: "mm" },
-  { key: "part_length", label: "Length", unit: "mm" },
-  { key: "part_angle", label: "Angle", unit: "deg" },
-  { key: "part_arch_length", label: "Arch Length", unit: "mm" },
-  { key: "part_sector", label: "Sector", unit: "" },
-];
+const MODES = ["Counting", "Defect Detection", "Measurement"];
 
-const MEASURABLE_PARAMS = [
-  "part_length", "part_width", "part_height", "part_inner_diameter",
-  "part_outer_diameter", "part_angle", "part_arch_length", "part_sector",
+const FAMILIES = [
+  { base: "length", label: "Length", unit: "mm" },
+  { base: "width", label: "Width", unit: "mm" },
+  { base: "height", label: "Height", unit: "mm" },
+  { base: "id", label: "Inner Diameter", unit: "mm" },
+  { base: "od", label: "Outer Diameter", unit: "mm" },
+  { base: "angle", label: "Angle", unit: "deg" },
+  { base: "arch", label: "Arch Length", unit: "mm" },
+  { base: "sector", label: "Sector", unit: "" },
 ];
 
 const BOOLEAN_FLAGS = [
@@ -35,11 +30,13 @@ const BOOLEAN_FLAGS = [
   { key: "part_concentricity", label: "Concentricity" },
 ];
 
-const emptyDimensions = () =>
-  DIMENSION_FIELDS.reduce((acc, f) => ({ ...acc, [f.key]: "" }), {});
-
-// allows empty, digits, single decimal point — no minus sign
 const nonNegative = (v) => v === "" || /^[0-9]*\.?[0-9]*$/.test(v);
+
+const emptyInstance = () => ({ value: "", min_value: "", max_value: "", calibration_factor: "" });
+const initFamilyState = () =>
+  FAMILIES.reduce((acc, f) => ({ ...acc, [f.base]: [emptyInstance()] }), {});
+
+const emptyDefect = () => ({ defect_name: "", confidence_threshold: "" });
 
 const inputSx = {
   "& .MuiOutlinedInput-root": { height: 44, borderRadius: 1.5, bgcolor: "background.paper" },
@@ -84,27 +81,25 @@ const AddNewPart = ({ loginData }) => {
   };
 
   const [categories, setCategories] = useState([]);
-  const [modelNames, setModelNames] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [newCategory, setNewCategory] = useState("");
-  const [modelName, setModelName] = useState("");
   const [partName, setPartName] = useState("");
   const [partCode, setPartCode] = useState("");
   const [partsMetadata, setPartsMetadata] = useState("");
-  const [dimensions, setDimensions] = useState(emptyDimensions());
+  const [mode, setMode] = useState("Counting");
+  const [weight, setWeight] = useState("");
+  const [families, setFamilies] = useState(initFamilyState());
+  const [defects, setDefects] = useState([emptyDefect()]);
   const [flags, setFlags] = useState({
     part_co_planarity: false, part_parallelity: false, part_concentricity: false,
   });
-  const [measParams, setMeasParams] = useState({});
   const [imageFile, setImageFile] = useState(null);
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadResult, setUploadResult] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [modelDialogOpen, setModelDialogOpen] = useState(false);
 
   useEffect(() => {
     fetchCategories();
-    fetchModelNames();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -116,42 +111,6 @@ const AddNewPart = ({ loginData }) => {
       toast.error("Failed to fetch categories.", { style: toastStyles });
     }
   };
-
-  const fetchModelNames = async () => {
-    try {
-      const res = await axios.get(`${BASE}/dashboard/ai-model-names`);
-      setModelNames(res.data || []);
-    } catch (err) {
-      console.warn("Failed to fetch AI model names", err);
-    }
-  };
-
-  // create + select a new category
-  const handleAddCategory = guard(async () => {
-    const clean = newCategory.trim();
-    if (!clean) {
-      toast.error("Please type a category name.", { style: toastStyles });
-      return;
-    }
-    try {
-      const fd = new FormData();
-      fd.append("category_name", clean);
-      const res = await axios.post(`${BASE}/dashboard/add-category`, fd);
-      // support both {id,name} and {category_id,category_name} responses
-      const newCat = {
-        id: res.data.id ?? res.data.category_id,
-        name: res.data.name ?? res.data.category_name,
-      };
-      setCategories((prev) =>
-        prev.some((c) => c.id === newCat.id) ? prev : [...prev, newCat]
-      );
-      setSelectedCategory(newCat);
-      setNewCategory("");
-      toast.success(`Category "${newCat.name}" added.`, { style: toastStyles });
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to add category.", { style: toastStyles });
-    }
-  });
 
   const showAdminToast = () =>
     toast("This action needs admin rights. Please contact admin.", {
@@ -165,51 +124,97 @@ const AddNewPart = ({ loginData }) => {
     };
   }
 
-  const setDim = (key) => (e) => {
-    const val = e.target.value;
-    if (nonNegative(val)) setDimensions((d) => ({ ...d, [key]: val }));
-  };
+  const handleAddCategory = guard(async () => {
+    const clean = newCategory.trim();
+    if (!clean) {
+      toast.error("Please type a category name.", { style: toastStyles });
+      return;
+    }
+    try {
+      const fd = new FormData();
+      fd.append("category_name", clean);
+      const res = await axios.post(`${BASE}/dashboard/add-category`, fd);
+      const newCat = {
+        id: res.data.id ?? res.data.category_id,
+        name: res.data.name ?? res.data.category_name,
+      };
+      setCategories((prev) => (prev.some((c) => c.id === newCat.id) ? prev : [...prev, newCat]));
+      setSelectedCategory(newCat);
+      setNewCategory("");
+      toast.success(`Category "${newCat.name}" added.`, { style: toastStyles });
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to add category.", { style: toastStyles });
+    }
+  });
 
-  // ----- measurement builder (min/max only, non-negative) -----
-  const addMeasParam = (param) => {
-    if (!param || measParams[param]) return;
-    setMeasParams((mp) => ({ ...mp, [param]: [{ min_value: "", max_value: "" }] }));
-  };
-  const addMeasRow = (param) =>
-    setMeasParams((mp) => ({ ...mp, [param]: [...mp[param], { min_value: "", max_value: "" }] }));
-  const updateMeasRow = (param, i, field, value) =>
-    setMeasParams((mp) => ({
-      ...mp, [param]: mp[param].map((r, idx) => (idx === i ? { ...r, [field]: value } : r)),
-    }));
-  const removeMeasRow = (param, i) =>
-    setMeasParams((mp) => {
-      const rows = mp[param].filter((_, idx) => idx !== i);
-      const next = { ...mp };
-      if (rows.length === 0) delete next[param]; else next[param] = rows;
-      return next;
+  // ----- dimension family instances -----
+  const addInstance = (base) =>
+    setFamilies((f) => ({ ...f, [base]: [...f[base], emptyInstance()] }));
+
+  const removeInstance = (base, idx) =>
+    setFamilies((f) => {
+      if (idx === 0) return f; // instance 1 always stays
+      return { ...f, [base]: f[base].filter((_, i) => i !== idx) };
     });
-  const removeMeasParam = (param) =>
-    setMeasParams((mp) => { const n = { ...mp }; delete n[param]; return n; });
+
+  const updateInstance = (base, idx, field, value) =>
+    setFamilies((f) => ({
+      ...f,
+      [base]: f[base].map((inst, i) => (i === idx ? { ...inst, [field]: value } : inst)),
+    }));
 
   const buildMeasurementPayload = () => {
     const out = {};
-    for (const [param, rows] of Object.entries(measParams)) {
-      const cleaned = rows
-        .filter((r) => r.min_value !== "" || r.max_value !== "")
-        .map((r) => ({
-          min_value: r.min_value === "" ? null : Math.abs(Number(r.min_value)),
-          max_value: r.max_value === "" ? null : Math.abs(Number(r.max_value)),
-        }));
-      if (cleaned.length) out[param] = cleaned;
+    for (const fam of FAMILIES) {
+      families[fam.base].forEach((inst, i) => {
+        const entry = {};
+        if (inst.value !== "") entry.value = Math.abs(Number(inst.value));
+        if (inst.min_value !== "") entry.min_value = Math.abs(Number(inst.min_value));
+        if (inst.max_value !== "") entry.max_value = Math.abs(Number(inst.max_value));
+        if (inst.calibration_factor !== "") entry.calibration_factor = Number(inst.calibration_factor);
+        if (Object.keys(entry).length) out[`${fam.base}${i + 1}`] = entry;
+      });
     }
     return out;
   };
 
+  const validateMinMax = () => {
+    for (const fam of FAMILIES) {
+      for (let i = 0; i < families[fam.base].length; i++) {
+        const inst = families[fam.base][i];
+        if (inst.min_value !== "" && inst.max_value !== "" &&
+            Number(inst.min_value) > Number(inst.max_value)) {
+          return `${fam.label} (instance ${i + 1}): Min cannot be greater than Max.`;
+        }
+      }
+    }
+    return null;
+  };
+
+  // ----- defects -----
+  const addDefect = () => setDefects((d) => [...d, emptyDefect()]);
+  const removeDefect = (idx) => setDefects((d) => (idx === 0 ? d : d.filter((_, i) => i !== idx)));
+  const updateDefect = (idx, field, value) =>
+    setDefects((d) => d.map((item, i) => (i === idx ? { ...item, [field]: value } : item)));
+
+  const buildDefectPayload = () => {
+    const out = {};
+    defects.forEach((d, i) => {
+      if (d.defect_name.trim()) {
+        out[`d${i + 1}`] = {
+          defect_name: d.defect_name.trim(),
+          ...(d.confidence_threshold !== "" && { confidence_threshold: Number(d.confidence_threshold) }),
+        };
+      }
+    });
+    return out;
+  };
+
   const resetForm = () => {
-    setPartName(""); setPartCode(""); setPartsMetadata("");
-    setDimensions(emptyDimensions());
+    setPartName(""); setPartCode(""); setPartsMetadata(""); setMode("Counting");
+    setWeight(""); setFamilies(initFamilyState()); setDefects([emptyDefect()]);
     setFlags({ part_co_planarity: false, part_parallelity: false, part_concentricity: false });
-    setMeasParams({}); setSelectedCategory(null); setNewCategory(""); setModelName(""); setImageFile(null);
+    setSelectedCategory(null); setNewCategory(""); setImageFile(null);
     const el = document.getElementById("single-image-input");
     if (el) el.value = null;
   };
@@ -220,31 +225,27 @@ const AddNewPart = ({ loginData }) => {
       return;
     }
 
-    // min must not exceed max
-    for (const [param, rows] of Object.entries(measParams)) {
-      for (const r of rows) {
-        if (r.min_value !== "" && r.max_value !== "" &&
-            Number(r.min_value) > Number(r.max_value)) {
-          toast.error(`${param}: Min cannot be greater than Max.`, { style: toastStyles });
-          return;
-        }
-      }
-    }
+    const err = validateMinMax();
+    if (err) { toast.error(err, { style: toastStyles }); return; }
 
     const fd = new FormData();
     fd.append("part_name", partName.trim());
     fd.append("part_code", partCode.trim());
-    // dropdown selection wins; otherwise send the typed new category name
     if (selectedCategory) fd.append("category_id", selectedCategory.id);
     else fd.append("category_name", newCategory.trim());
     if (partsMetadata.trim()) fd.append("parts_metadata", partsMetadata.trim());
-    if (modelName.trim()) fd.append("model_name", modelName.trim());
-    DIMENSION_FIELDS.forEach(({ key }) => {
-      if (dimensions[key] !== "" && !isNaN(Number(dimensions[key]))) fd.append(key, dimensions[key]);
-    });
+    fd.append("mode_of_operation", mode);
+    if (weight !== "" && !isNaN(Number(weight))) fd.append("part_weight", weight);
     BOOLEAN_FLAGS.forEach(({ key }) => fd.append(key, flags[key] ? "true" : "false"));
-    const meas = buildMeasurementPayload();
-    if (Object.keys(meas).length) fd.append("measurement_parameters", JSON.stringify(meas));
+
+    const measurementPayload = buildMeasurementPayload();
+    if (Object.keys(measurementPayload).length)
+      fd.append("measurement_parameters", JSON.stringify(measurementPayload));
+
+    const defectPayload = buildDefectPayload();
+    if (Object.keys(defectPayload).length)
+      fd.append("defect_parameters", JSON.stringify(defectPayload));
+
     if (imageFile) fd.append("image", imageFile);
 
     try {
@@ -254,10 +255,8 @@ const AddNewPart = ({ loginData }) => {
       toast.success(`Part added! ID: ${res.data.part_id}`, {
         position: "top-center", autoClose: 3000, style: toastStyles,
       });
-      if (modelName.trim() && !modelNames.includes(modelName.trim()))
-        setModelNames((p) => [...p, modelName.trim()]);
       resetForm();
-      fetchCategories(); // in case a new category was created via category_name
+      fetchCategories();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Failed to add part.", {
         position: "top-center", autoClose: 3000, style: toastStyles,
@@ -283,10 +282,9 @@ const AddNewPart = ({ loginData }) => {
       if (el) el.value = null;
       const { created_parts, linked_parts, errors } = res.data;
       toast.success(
-        `Uploaded ✅ parts: ${created_parts ?? 0}, linked: ${linked_parts ?? 0}${errors?.length ? `, errors: ${errors.length}` : ""}`,
+        `Uploaded ✅ parts: ${created_parts ?? 0}, with defects configured: ${linked_parts ?? 0}${errors?.length ? `, errors: ${errors.length}` : ""}`,
         { position: "top-center", autoClose: 4000, style: toastStyles },
       );
-      fetchModelNames();
       fetchCategories();
     } catch (err) {
       toast.error(JSON.stringify(err.response?.data || err.message), { style: toastStyles });
@@ -314,9 +312,6 @@ const AddNewPart = ({ loginData }) => {
     }
   };
 
-  const measurableAvailable = MEASURABLE_PARAMS.filter((p) => !measParams[p]);
-
-  // mutual exclusivity flags
   const newCategoryActive = newCategory.trim().length > 0;
   const dropdownDisabled = isFormDisabled || newCategoryActive;
   const newCategoryDisabled = isFormDisabled || !!selectedCategory;
@@ -333,7 +328,8 @@ const AddNewPart = ({ loginData }) => {
             <Typography variant="h6" sx={{ fontWeight: 700 }}>Bulk Part Upload</Typography>
           </Stack>
           <Typography variant="body2" sx={{ color: "text.secondary", mb: 2 }}>
-            Upload parts in one Excel/CSV file. Download the template to see every supported column.
+            Upload parts in one Excel/CSV file. Download the template to see every supported column,
+            including how to add unlimited length/width/etc. instances and defects.
           </Typography>
 
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ flexWrap: "wrap" }}>
@@ -362,7 +358,7 @@ const AddNewPart = ({ loginData }) => {
             <Box sx={{ mt: 2, p: 2, borderRadius: 1.5, bgcolor: "accent.light", border: 1, borderColor: "divider" }}>
               <Typography sx={{ fontWeight: 700, mb: 0.5 }}>Import finished</Typography>
               <Typography variant="body2">Created parts: {uploadResult.created_parts ?? 0}</Typography>
-              <Typography variant="body2">Linked parts: {uploadResult.linked_parts ?? 0}</Typography>
+              <Typography variant="body2">With defects configured: {uploadResult.linked_parts ?? 0}</Typography>
               {uploadResult.errors?.length > 0 && (
                 <Typography variant="body2" color="error" sx={{ mt: 0.5 }}>
                   Errors ({uploadResult.errors.length}): {uploadResult.errors.join(", ")}
@@ -381,7 +377,6 @@ const AddNewPart = ({ loginData }) => {
 
           <Section title="Basic Information">
             <Stack spacing={2}>
-              {/* Existing category dropdown */}
               <Autocomplete
                 options={categories}
                 value={selectedCategory}
@@ -396,24 +391,18 @@ const AddNewPart = ({ loginData }) => {
                 )}
               />
 
-              {/* New category input + button (disabled while a dropdown value is chosen) */}
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "flex-start" }}>
                 <TextField
-                  fullWidth
-                  label="Add New Category"
-                  value={newCategory}
+                  fullWidth label="Add New Category" value={newCategory}
                   disabled={newCategoryDisabled}
                   onChange={(e) => (!isFormDisabled ? setNewCategory(e.target.value) : showAdminToast())}
                   onKeyDown={(e) => e.key === "Enter" && handleAddCategory()}
                   helperText={selectedCategory ? "Clear the dropdown to add a new category" : " "}
                   sx={inputSx}
                 />
-                <Button
-                  variant="contained" color="primary"
-                  onClick={handleAddCategory}
+                <Button variant="contained" color="primary" onClick={handleAddCategory}
                   disabled={newCategoryDisabled || !newCategory.trim()}
-                  sx={{ whiteSpace: "nowrap", height: 44, ...persistentPrimary(theme) }}
-                >
+                  sx={{ whiteSpace: "nowrap", height: 44, ...persistentPrimary(theme) }}>
                   Add Category
                 </Button>
               </Stack>
@@ -424,39 +413,66 @@ const AddNewPart = ({ loginData }) => {
                 <TextField fullWidth label="Part Code *" value={partCode} sx={inputSx}
                   onChange={(e) => (!isFormDisabled ? setPartCode(e.target.value) : showAdminToast())} />
               </Stack>
+
+              <TextField select fullWidth label="Mode of Operation *" value={mode} sx={inputSx}
+                onChange={(e) => (!isFormDisabled ? setMode(e.target.value) : showAdminToast())}>
+                {MODES.map((m) => <MenuItem key={m} value={m}>{m}</MenuItem>)}
+              </TextField>
+
+              <TextField fullWidth label="Parts Metadata (optional)" value={partsMetadata} sx={inputSx}
+                onChange={(e) => (!isFormDisabled ? setPartsMetadata(e.target.value) : showAdminToast())} />
             </Stack>
           </Section>
 
           <Divider sx={{ mb: 3 }} />
 
-          <Section title="AI Model" subtitle="Reference name only — a developer links the actual AI model to this name.">
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ sm: "stretch" }}>
-              <Autocomplete
-                freeSolo sx={{ flex: 1 }} options={modelNames} value={modelName}
-                onInputChange={(e, v) => (!isFormDisabled ? setModelName(v || "") : showAdminToast())}
-                renderInput={(p) => <TextField {...p} label="AI Model Name (reference)" sx={inputSx} />}
-              />
-              <Button variant="contained" color="primary" sx={{ whiteSpace: "nowrap", ...persistentPrimary(theme) }}
-                onClick={() => (!isFormDisabled ? setModelDialogOpen(true) : showAdminToast())}>
-                🤖 Add AI Model
-              </Button>
-            </Stack>
+          <Section title="Weight">
+            <TextField
+              label="Weight (g)" value={weight} sx={{ ...inputSx, maxWidth: 260 }}
+              inputProps={{ inputMode: "decimal" }}
+              onChange={(e) => nonNegative(e.target.value) && setWeight(e.target.value)}
+            />
           </Section>
 
           <Divider sx={{ mb: 3 }} />
 
-          <Section title="Part Dimensions">
-            <Box sx={{
-              display: "grid",
-              gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", md: "1fr 1fr 1fr", lg: "repeat(4, 1fr)" },
-              gap: 2,
-            }}>
-              {DIMENSION_FIELDS.map(({ key, label, unit }) => (
-                <TextField key={key} label={label} value={dimensions[key]} onChange={setDim(key)}
-                  inputProps={{ inputMode: "decimal" }} sx={inputSx}
-                  InputProps={unit ? { endAdornment: <InputAdornment position="end">{unit}</InputAdornment> } : undefined} />
-              ))}
-            </Box>
+          <Section title="Part Parameters" subtitle="Add as many instances as this part has of each dimension — there's no limit.">
+            {FAMILIES.map((fam) => (
+              <Box key={fam.base} sx={{ border: 1, borderColor: "divider", borderRadius: 1.5, p: 2, mb: 2 }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                  <Typography sx={{ fontWeight: 700, fontSize: "0.9rem" }}>
+                    {fam.label}{fam.unit ? ` (${fam.unit})` : ""}
+                  </Typography>
+                  <Chip size="small"
+                    label={`${families[fam.base].length} instance${families[fam.base].length > 1 ? "s" : ""}`}
+                    sx={{ bgcolor: "accent.light" }} />
+                </Stack>
+
+                {families[fam.base].map((inst, i) => (
+                  <Box key={i} sx={{
+                    display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr 1fr auto",
+                    gap: 1, mb: 1, alignItems: "center",
+                  }}>
+                    <Typography variant="caption" sx={{ color: "text.secondary", minWidth: 60 }}>
+                      {fam.base}{i + 1}
+                    </Typography>
+                    <TextField label="Value" value={inst.value} sx={inputSx}
+                      onChange={(e) => nonNegative(e.target.value) && updateInstance(fam.base, i, "value", e.target.value)} />
+                    <TextField label="Min" value={inst.min_value} sx={inputSx}
+                      onChange={(e) => nonNegative(e.target.value) && updateInstance(fam.base, i, "min_value", e.target.value)} />
+                    <TextField label="Max" value={inst.max_value} sx={inputSx}
+                      onChange={(e) => nonNegative(e.target.value) && updateInstance(fam.base, i, "max_value", e.target.value)} />
+                    <TextField label="Cal. Factor" value={inst.calibration_factor} sx={inputSx}
+                      onChange={(e) => nonNegative(e.target.value) && updateInstance(fam.base, i, "calibration_factor", e.target.value)} />
+                    {i > 0 && <IconButton size="small" onClick={() => removeInstance(fam.base, i)}>✕</IconButton>}
+                  </Box>
+                ))}
+
+                <Button size="small" color="primary" onClick={() => addInstance(fam.base)}>
+                  + Add another {fam.label.toLowerCase()} ({fam.base}{families[fam.base].length + 1})
+                </Button>
+              </Box>
+            ))}
           </Section>
 
           <Divider sx={{ mb: 3 }} />
@@ -473,36 +489,19 @@ const AddNewPart = ({ loginData }) => {
 
           <Divider sx={{ mb: 3 }} />
 
-          <Section title="Measurement Parameters (optional)"
-            subtitle="For each parameter add one or more min/max limits. Negative values are not allowed.">
-            <Autocomplete
-              sx={{ maxWidth: 320, mb: 2 }} options={measurableAvailable} value={null}
-              onChange={(e, v) => v && addMeasParam(v)}
-              renderInput={(p) => <TextField {...p} label="Add parameter" sx={inputSx} />}
-            />
-
-            {Object.entries(measParams).map(([param, rows]) => (
-              <Box key={param} sx={{ border: 1, borderColor: "divider", borderRadius: 1.5, p: 2, mb: 2, bgcolor: "accent.light" }}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                  <Typography sx={{ fontWeight: 700, fontSize: "0.9rem" }}>{param}</Typography>
-                  <IconButton size="small" onClick={() => removeMeasParam(param)}>✕</IconButton>
-                </Stack>
-                {rows.map((row, i) => (
-                  <Box key={i} sx={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr auto",
-                    gap: 1, mb: 1, alignItems: "center",
-                  }}>
-                    <TextField label="Min" value={row.min_value} sx={inputSx} inputProps={{ inputMode: "decimal", min: 0 }}
-                      onChange={(e) => nonNegative(e.target.value) && updateMeasRow(param, i, "min_value", e.target.value)} />
-                    <TextField label="Max" value={row.max_value} sx={inputSx} inputProps={{ inputMode: "decimal", min: 0 }}
-                      onChange={(e) => nonNegative(e.target.value) && updateMeasRow(param, i, "max_value", e.target.value)} />
-                    <IconButton size="small" onClick={() => removeMeasRow(param, i)} sx={{ justifySelf: "center" }}>✕</IconButton>
-                  </Box>
-                ))}
-                <Button size="small" color="primary" onClick={() => addMeasRow(param)}>+ Add limit</Button>
+          <Section title="Defects" subtitle="Add each defect this part should be checked for, with an optional confidence threshold.">
+            {defects.map((d, i) => (
+              <Box key={i} sx={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr auto", gap: 1, mb: 1, alignItems: "center" }}>
+                <Typography variant="caption" sx={{ color: "text.secondary", minWidth: 30 }}>d{i + 1}</Typography>
+                <TextField label="Defect name" value={d.defect_name} sx={inputSx}
+                  onChange={(e) => updateDefect(i, "defect_name", e.target.value)} />
+                <TextField label="Confidence threshold" value={d.confidence_threshold} sx={inputSx}
+                  inputProps={{ inputMode: "decimal" }}
+                  onChange={(e) => nonNegative(e.target.value) && updateDefect(i, "confidence_threshold", e.target.value)} />
+                {i > 0 && <IconButton size="small" onClick={() => removeDefect(i)}>✕</IconButton>}
               </Box>
             ))}
+            <Button size="small" color="primary" onClick={addDefect}>+ Add another defect</Button>
           </Section>
 
           <Divider sx={{ mb: 3 }} />
@@ -529,45 +528,7 @@ const AddNewPart = ({ loginData }) => {
           </Box>
         </Box>
       </Box>
-
-      <ModelNameDialog
-        open={modelDialogOpen} existingNames={modelNames} inputSx={inputSx}
-        onClose={() => setModelDialogOpen(false)}
-        onSave={(name) => {
-          const clean = name.trim();
-          if (clean && !modelNames.includes(clean)) setModelNames((p) => [...p, clean]);
-          setModelName(clean);
-          setModelDialogOpen(false);
-          toast.success(`AI model name "${clean}" set as reference.`, { style: toastStyles });
-        }}
-      />
     </Box>
-  );
-};
-
-const ModelNameDialog = ({ open, onClose, onSave, existingNames, inputSx }) => {
-  const [name, setName] = useState("");
-  const save = () => { if (!name.trim()) return; onSave(name); setName(""); };
-  return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle sx={{ fontWeight: 700 }}>Add AI Model (reference name)</DialogTitle>
-      <DialogContent dividers>
-        <Typography variant="body2" sx={{ color: "text.secondary", mb: 2 }}>
-          Enter the name a developer will use to link the actual AI model (e.g. <b>bolt</b>). Only the name is stored here.
-        </Typography>
-        <TextField fullWidth autoFocus label="Model Name *" value={name} sx={inputSx}
-          onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} />
-        {existingNames?.length > 0 && (
-          <Typography variant="caption" sx={{ color: "text.secondary", mt: 1, display: "block" }}>
-            Existing: {existingNames.join(", ")}
-          </Typography>
-        )}
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose} color="inherit">Cancel</Button>
-        <Button variant="contained" color="primary" onClick={save}>Use This Name</Button>
-      </DialogActions>
-    </Dialog>
   );
 };
 

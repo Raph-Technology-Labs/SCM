@@ -8,16 +8,10 @@ factor:
 Defects support unlimited numbered instances, each with a name + threshold:
     d1_name, d1_threshold, d2_name, d2_threshold, ...
 
-Excel layout:
-    B1        = mode_of_operation for the ENTIRE sheet (Counting /
-                Defect Detection / Measurement). Defaults to Counting if
-                blank/invalid. There is no per-row mode column — every part
-                row in the file is uploaded under this one mode.
-    Row 3     = column headers
-    Row 4+    = part data rows
-
-CSV files have no equivalent global-mode cell, so CSV still expects a
-per-row mode_of_operation column, defaulting to Counting if absent/invalid.
+mode_of_operation is NOT read from the sheet. It is always supplied
+externally by the caller (the UI's mode dropdown, applied by the router
+after process() runs) and overrides the PartRow default. Plain layout:
+row 1 = headers, row 2+ = data.
 """
 
 from __future__ import annotations
@@ -186,10 +180,6 @@ def _row_to_part(rec: dict) -> Optional[PartRow]:
 
 
 class SpreadsheetCsvImporter:
-    """CSV has no equivalent of an Excel 'global mode cell', so it still
-    expects a per-row mode_of_operation column (defaults to Counting if
-    absent/invalid)."""
-
     def __init__(self, file):
         self.df = pd.read_csv(file, dtype_backend="numpy_nullable")
         self.df = self.df.rename(columns=_build_header_map(self.df.columns))
@@ -210,30 +200,18 @@ class SpreadsheetCsvImporter:
 
 
 class SpreadsheetExcelImporter:
-    """
-    Layout:
-        B1     = sheet-wide mode_of_operation
-        Row 3  = column headers
-        Row 4+ = part data
-    """
-
-    HEADER_ROW = 3
-    DATA_START_ROW = 4
-    MODE_CELL = "B1"
+    """Plain layout: row 1 = headers, row 2+ = part data.
+    mode_of_operation is not read from the sheet; the router overwrites it
+    on every returned PartRow using the UI's selected mode."""
 
     def __init__(self, file: BytesIO):
         if openpyxl is None:
             raise RuntimeError("openpyxl is required for Excel import")
         self.wb = openpyxl.load_workbook(file)
-        # Parts sheet: prefer a sheet literally named "Parts"; else the active one
         self.sheet = self.wb["Parts"] if "Parts" in self.wb.sheetnames else self.wb.active
         self.image_loader = SheetImageLoader(self.sheet) if SheetImageLoader else None
 
-        # sheet-wide mode, read once from B1
-        raw_mode = str(self.sheet[self.MODE_CELL].value or "").strip()
-        self.sheet_mode = raw_mode if raw_mode in VALID_MODES else "Counting"
-
-        raw_headers = [c.value for c in self.sheet[self.HEADER_ROW]]
+        raw_headers = [c.value for c in next(self.sheet.iter_rows(min_row=1, max_row=1))]
         header_map = _build_header_map(raw_headers)
         self.col_names = {i: header_map.get(h, _clean(h)) for i, h in enumerate(raw_headers)}
         self.name_to_idx = {v: k for k, v in self.col_names.items()}
@@ -256,14 +234,11 @@ class SpreadsheetExcelImporter:
     def process(self) -> tuple[list[PartRow], list[str]]:
         rows, errors = [], []
         for r_idx, excel_row in enumerate(
-            self.sheet.iter_rows(min_row=self.DATA_START_ROW, values_only=True),
-            start=self.DATA_START_ROW,
+            self.sheet.iter_rows(min_row=2, values_only=True), start=2
         ):
             rec = {self.col_names[i]: v for i, v in enumerate(excel_row) if i in self.col_names}
             if not rec.get("image"):
                 rec["image"] = self._image_from_cell(r_idx)
-            # inject the sheet-wide mode — there is no per-row mode column anymore
-            rec["mode_of_operation"] = self.sheet_mode
             part = _row_to_part(rec)
             if part is None:
                 if any(v not in (None, "") for v in excel_row):

@@ -94,6 +94,9 @@ const AddNewPart = ({ loginData }) => {
     part_co_planarity: false, part_parallelity: false, part_concentricity: false,
   });
   const [imageFile, setImageFile] = useState(null);
+
+  // ----- bulk upload state -----
+  const [bulkMode, setBulkMode] = useState("Counting");
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadResult, setUploadResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -264,6 +267,7 @@ const AddNewPart = ({ loginData }) => {
     }
   });
 
+  // ----- bulk upload -----
   const handleBulkUpload = guard(async () => {
     if (!uploadFile) { toast.error("Please select a CSV or Excel file first.", { style: toastStyles }); return; }
     if (!/\.(csv|xlsx)$/i.test(uploadFile.name)) {
@@ -272,6 +276,7 @@ const AddNewPart = ({ loginData }) => {
     setLoading(true);
     const fd = new FormData();
     fd.append("file", uploadFile);
+    fd.append("mode_of_operation", bulkMode);
     try {
       const res = await axios.post(`${BASE}/dashboard/bulk-upload-parts`, fd, {
         headers: { "Content-Type": "multipart/form-data" },
@@ -295,14 +300,17 @@ const AddNewPart = ({ loginData }) => {
 
   const startTemplateDownload = async () => {
     try {
-      const response = await fetch(`${BASE}/dashboard/bulk-upload-template`, { method: "GET" });
+      const response = await fetch(
+        `${BASE}/dashboard/bulk-upload-template?mode=${encodeURIComponent(bulkMode)}&t=${Date.now()}`,
+        { method: "GET", cache: "no-store" },
+      );
       if (!response.ok) throw new Error(await response.text());
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
-      const ts = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+      const modeSlug = bulkMode.replace(/\s+/g, "");
       a.href = url;
-      a.download = `TemplateBulkUpload-${ts}.xlsx`;
+      a.download = `TemplateBulkUpload_${modeSlug}.xlsx`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -328,9 +336,20 @@ const AddNewPart = ({ loginData }) => {
             <Typography variant="h6" sx={{ fontWeight: 700 }}>Bulk Part Upload</Typography>
           </Stack>
           <Typography variant="body2" sx={{ color: "text.secondary", mb: 2 }}>
-            Upload parts in one Excel/CSV file. Download the template to see every supported column,
-            including how to add unlimited length/width/etc. instances and defects.
+            Select the mode of operation first — the template and every part in your file will use it.
           </Typography>
+
+          <TextField
+            select
+            label="Mode of Operation *"
+            value={bulkMode}
+            onChange={(e) => setBulkMode(e.target.value)}
+            sx={{ ...inputSx, minWidth: 220, mb: 1.5 }}
+          >
+            {MODES.map((m) => (
+              <MenuItem key={m} value={m}>{m}</MenuItem>
+            ))}
+          </TextField>
 
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ flexWrap: "wrap" }}>
             <Button variant="contained" color="primary" component="label"

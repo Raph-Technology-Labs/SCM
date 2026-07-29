@@ -53,6 +53,8 @@ from app.schemas import (
     ImportResult,
 )
 from app.services.spreadsheet_importer import SpreadsheetCsvImporter, SpreadsheetExcelImporter
+from app.services.template_builder import build_template, MODE_SLUGS
+from fastapi.responses import StreamingResponse
 # from app.routers.websocket_manager import get_websocket_manager
 # from app.utils.zpl import ZPLGenerator
 # from app.utils.labels import util_print_label
@@ -236,7 +238,14 @@ async def add_part(
 
 
 @router.post("/bulk-upload-parts", response_model=ImportResult)
-async def bulk_upload_parts(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def bulk_upload_parts(
+    file: UploadFile = File(...),
+    mode_of_operation: str = Form(...),   # REQUIRED — always comes from the UI dropdown
+    db: Session = Depends(get_db),
+):
+    if mode_of_operation not in VALID_MODES:
+        raise HTTPException(status_code=400, detail=f"Invalid mode_of_operation: {mode_of_operation}")
+
     filename = (file.filename or "").lower()
     if filename.endswith(".csv"):
         rows, errors = SpreadsheetCsvImporter(file.file).process()
@@ -245,6 +254,11 @@ async def bulk_upload_parts(file: UploadFile = File(...), db: Session = Depends(
         rows, errors = SpreadsheetExcelImporter(io.BytesIO(contents)).process()
     else:
         raise HTTPException(status_code=400, detail="Only CSV or Excel files are supported")
+
+    # UI dropdown is the single source of truth for mode — overrides anything
+    # the importer defaulted to.
+    for r in rows:
+        r.mode_of_operation = mode_of_operation
 
     created_parts = linked_parts = 0
     errors = list(errors)
@@ -284,7 +298,7 @@ async def bulk_upload_parts(file: UploadFile = File(...), db: Session = Depends(
             )
             created_parts += 1
             if r.defect_parameters:
-                linked_parts += 1  # now means "parts with defect config set"
+                linked_parts += 1  # "parts with defect config set"
             db.flush()
         except Exception as e:
             db.rollback()
@@ -299,18 +313,19 @@ async def bulk_upload_parts(file: UploadFile = File(...), db: Session = Depends(
 
 
 @router.get("/bulk-upload-template")
-async def bulk_upload_template():
-    # go up from routers/ to app/, then into assets/
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    file_path = os.path.join(base_dir, "assets", "TemplateBulkUpload.xlsx")
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Template not found")
-    return FileResponse(
-        path=file_path,
-        filename="TemplateBulkUpload.xlsx",
+async def bulk_upload_template(mode: str = Query(...)):
+    if mode not in VALID_MODES:
+        raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
+
+    buf = build_template(mode)
+    filename = f"TemplateBulkUpload_{MODE_SLUGS[mode]}.xlsx"
+    return StreamingResponse(
+        buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
+    
 
 def _part_detail_dict(part: Part, db: Session) -> dict:
     ai_model_defects = None

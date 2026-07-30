@@ -1,0 +1,113 @@
+# machine_config.yaml
+# Machine/hardware-level config only.
+# Per-part measurement limits and defect thresholds now live in the DB
+# (parts.measurement_parameters / parts.defect_parameters), NOT here.
+
+system:
+  name: "MV Web"
+  debug: false
+
+# ── infrastructure (NEW — required by the FastAPI router) ────────────
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  key_count: "count"          # was config.redis.key_count
+  count_channel: "count_channel"
+
+plc:
+  enabled: true
+  ip: "192.168.1.10"
+  port: 502
+  addresses:
+    start_stop: 100           # was config.plc.addresses.start_stop
+    # add other register addresses here as you port PLC logic
+
+# ── pipeline configs (per mode) ─────────────────────────────────────
+counting:
+  guide_roi: {x1: 371, y1: 56, x2: 1582, y2: 1005}
+  model_path: "nuts.pt"
+  device: "cpu"
+  class_map:
+    0: "nuts"
+  camera:
+    type: "lucid"
+    serial: ""
+    ip: "192.168.1.100"
+    resolution: {w: 1920, h: 1080}
+    fps: 30
+    exposure_us: 10000
+    gain: 1.0
+    pixel_format: "BGR8"
+    roi: {x: 0, y: 0, w: 1920, h: 1080}
+  tracking:
+    counting_line_y: 360
+    max_missed: 5
+    min_movement: 5
+    count_threshold: 20
+    count_threshold_last: 5
+  display:
+    show_bboxes: true
+    show_count: true
+  simulator:
+    enabled: false
+    video_path: "assets/simulator/counting_sample.mp4"
+    loop: true
+
+defect_detection:
+  guide_roi: {x1: 371, y1: 56, x2: 1582, y2: 1005}
+  model_path: "defect_rust_2.pt"
+  device: "cpu"
+  class_map:
+    0: "rust"
+  camera:
+    type: "lucid"
+    serial: ""
+    ip: "192.168.1.100"
+    resolution: {w: 1920, h: 1080}
+    fps: 30
+    exposure_us: 6000.0
+    gain: 4.0
+    pixel_format: "BGR8"
+    roi: {x: 0, y: 0, w: 1920, h: 1080}
+  # NOTE: per-defect confidence thresholds are NO LONGER here — they come
+  # from parts.defect_parameters[*].confidence_threshold at runtime.
+  # Optional fallback if a part has no threshold set:
+  default_confidence_threshold: 0.75
+  display:
+    show_bboxes: true
+  simulator:
+    enabled: false
+    video_path: "assets/simulator/counting_sample.mp4"
+
+measurement:
+  guide_roi: {x1: 306, y1: 157, x2: 1470, y2: 750}
+  model_path: "measurement.pt"
+  device: "cpu"
+  class_map:
+    0: "bolt"
+    1: "circle"
+    3: "nut"
+    4: "line"
+    5: "o-ring"
+    6: "rectangle"
+    7: "square"
+    8: "triangle"
+  camera:
+    type: "lucid"
+    serial: ""
+    ip: "192.168.1.100"
+    resolution: {w: 1920, h: 1080}
+    fps: 30
+    exposure_us: 5000.0
+    gain: 5.0
+    pixel_format: "BGR8"
+    roi: {x: 0, y: 0, w: 1920, h: 1080}
+  units: "mm"
+  # NOTE: expected/tolerance features are NO LONGER here — each part carries
+  # its own parts.measurement_parameters ({length1:{value,min,max,cal}, ...}).
+  display:
+    show_bboxes: true
+  simulator:
+    enabled: false
+    images_dir: "assets/simulator/"

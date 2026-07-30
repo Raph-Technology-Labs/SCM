@@ -11,21 +11,17 @@ import axios from "axios";
 
 const BASE = import.meta.env.VITE_BASE_URL || "";
 
-const DIMENSION_FIELDS = [
-  { key: "part_weight", label: "Weight", unit: "g" },
-  { key: "part_height", label: "Height", unit: "mm" },
-  { key: "part_width", label: "Width", unit: "mm" },
-  { key: "part_inner_diameter", label: "Inner Dia.", unit: "mm" },
-  { key: "part_outer_diameter", label: "Outer Dia.", unit: "mm" },
-  { key: "part_length", label: "Length", unit: "mm" },
-  { key: "part_angle", label: "Angle", unit: "deg" },
-  { key: "part_arch_length", label: "Arch Length", unit: "mm" },
-  { key: "part_sector", label: "Sector", unit: "" },
-];
+const MODES = ["Counting", "Defect Detection", "Measurement"];
 
-const MEASURABLE_PARAMS = [
-  "part_length", "part_width", "part_height", "part_inner_diameter",
-  "part_outer_diameter", "part_angle", "part_arch_length", "part_sector",
+const FAMILIES = [
+  { base: "length", label: "Length", unit: "mm" },
+  { base: "width", label: "Width", unit: "mm" },
+  { base: "height", label: "Height", unit: "mm" },
+  { base: "id", label: "Inner Diameter", unit: "mm" },
+  { base: "od", label: "Outer Diameter", unit: "mm" },
+  { base: "angle", label: "Angle", unit: "deg" },
+  { base: "arch", label: "Arch Length", unit: "mm" },
+  { base: "sector", label: "Sector", unit: "" },
 ];
 
 const BOOLEAN_FLAGS = [
@@ -42,16 +38,44 @@ const inputSx = {
   "& .MuiInputLabel-root": { fontSize: "0.85rem" },
 };
 
-// measurement_parameters JSON  ->  editable rows
-const paramsToRows = (mp) => {
-  const out = {};
-  Object.entries(mp || {}).forEach(([param, limits]) => {
-    out[param] = (limits || []).map((l) => ({
-      min_value: l.min_value ?? "",
-      max_value: l.max_value ?? "",
-    }));
+const emptyInstance = () => ({ value: "", min_value: "", max_value: "", calibration_factor: "" });
+const emptyDefect = () => ({ defect_name: "", confidence_threshold: "" });
+
+// measurement_parameters JSON -> { length: [{value,min,max,cal}, ...], width: [...] }
+const paramsToFamilies = (mp) => {
+  const out = FAMILIES.reduce((acc, f) => ({ ...acc, [f.base]: [] }), {});
+  Object.entries(mp || {}).forEach(([key, entry]) => {
+    const m = key.match(/^([a-z]+)(\d+)$/);
+    if (!m) return;
+    const [, base, idx] = m;
+    if (!out[base]) return;
+    out[base][Number(idx) - 1] = {
+      value: entry.value ?? "",
+      min_value: entry.min_value ?? "",
+      max_value: entry.max_value ?? "",
+      calibration_factor: entry.calibration_factor ?? "",
+    };
+  });
+  FAMILIES.forEach((f) => {
+    if (!out[f.base].length) out[f.base] = [emptyInstance()];
+    else out[f.base] = out[f.base].map((v) => v || emptyInstance());
   });
   return out;
+};
+
+// defect_parameters JSON -> [{defect_name, confidence_threshold}, ...]
+const defectParamsToRows = (dp) => {
+  const entries = Object.entries(dp || {})
+    .sort(([a], [b]) => {
+      const na = parseInt(a.replace(/\D/g, ""), 10) || 0;
+      const nb = parseInt(b.replace(/\D/g, ""), 10) || 0;
+      return na - nb;
+    })
+    .map(([, v]) => ({
+      defect_name: v.defect_name ?? "",
+      confidence_threshold: v.confidence_threshold ?? "",
+    }));
+  return entries.length ? entries : [emptyDefect()];
 };
 
 export default function PartDetails({ loginData }) {
@@ -62,13 +86,15 @@ export default function PartDetails({ loginData }) {
 
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState("");
+  const [selectedMode, setSelectedMode] = useState("");
   const [parts, setParts] = useState([]);
   const [filteredParts, setFilteredParts] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
 
   const [editOpen, setEditOpen] = useState(false);
   const [editPart, setEditPart] = useState({});
-  const [editMeas, setEditMeas] = useState({});
+  const [editFamilies, setEditFamilies] = useState({});
+  const [editDefects, setEditDefects] = useState([emptyDefect()]);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [partToDelete, setPartToDelete] = useState(null);
 
@@ -89,15 +115,16 @@ export default function PartDetails({ loginData }) {
       .get(`${BASE}/dashboard/categories?with_ids=true`)
       .then((res) => setCategories(res.data))
       .catch(() => notify("Failed to load categories", "error"));
-    fetchParts("");
+    fetchParts("", "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchParts = (categoryId, callback = null) => {
+  const fetchParts = (categoryId, modeFilter, callback = null) => {
+    const params = {};
+    if (categoryId) params.category_id = categoryId;
+    if (modeFilter) params.mode = modeFilter;
     axios
-      .get(`${BASE}/dashboard/parts/by-category`, {
-        params: categoryId ? { category_id: categoryId } : {},
-      })
+      .get(`${BASE}/dashboard/parts/by-category`, { params })
       .then((res) => {
         setParts(res.data);
         setFilteredParts(res.data);
@@ -109,7 +136,14 @@ export default function PartDetails({ loginData }) {
   const handleCategoryChange = (e) => {
     const id = e.target.value;
     setSelectedCategory(id);
-    fetchParts(id);
+    fetchParts(id, selectedMode);
+    setSearchTerm("");
+  };
+
+  const handleModeChange = (e) => {
+    const m = e.target.value;
+    setSelectedMode(m);
+    fetchParts(selectedCategory, m);
     setSearchTerm("");
   };
 
@@ -125,7 +159,6 @@ export default function PartDetails({ loginData }) {
     );
   };
 
-  // barcode scan / global search
   const handleScanOrGlobalSearch = async (codeOverride) => {
     const code = typeof codeOverride === "string" ? codeOverride : searchTerm;
     if (!code) { setFilteredParts(parts); return; }
@@ -145,7 +178,7 @@ export default function PartDetails({ loginData }) {
       const matched = categories.find((c) => c.name === data?.category_name);
       if (matched) {
         setSelectedCategory(matched.id);
-        fetchParts(matched.id, (newParts) => {
+        fetchParts(matched.id, selectedMode, (newParts) => {
           const exact = newParts.filter(
             (p) => p.part_code?.toLowerCase() === code.toLowerCase(),
           );
@@ -162,7 +195,8 @@ export default function PartDetails({ loginData }) {
 
   const handleEditClick = (part) => {
     setEditPart({ ...part });
-    setEditMeas(paramsToRows(part.measurement_parameters));
+    setEditFamilies(paramsToFamilies(part.measurement_parameters));
+    setEditDefects(defectParamsToRows(part.defect_parameters));
     setEditOpen(true);
   };
 
@@ -171,54 +205,77 @@ export default function PartDetails({ loginData }) {
     setEditPart((p) => ({ ...p, [key]: v }));
   };
 
-  const setEditNum = (key) => (e) => {
+  const setEditWeight = (e) => {
     const v = e.target.value;
-    if (nonNegative(v)) setEditPart((p) => ({ ...p, [key]: v }));
+    if (nonNegative(v)) setEditPart((p) => ({ ...p, part_weight: v }));
   };
 
-  // ---- measurement editing ----
-  const addMeasParam = (param) =>
-    setEditMeas((m) => (m[param] ? m : { ...m, [param]: [{ min_value: "", max_value: "" }] }));
-  const addMeasRow = (param) =>
-    setEditMeas((m) => ({ ...m, [param]: [...m[param], { min_value: "", max_value: "" }] }));
-  const updateMeasRow = (param, i, field, value) =>
-    setEditMeas((m) => ({
-      ...m, [param]: m[param].map((r, idx) => (idx === i ? { ...r, [field]: value } : r)),
-    }));
-  const removeMeasRow = (param, i) =>
-    setEditMeas((m) => {
-      const rows = m[param].filter((_, idx) => idx !== i);
-      const next = { ...m };
-      if (!rows.length) delete next[param]; else next[param] = rows;
-      return next;
-    });
-  const removeMeasParam = (param) =>
-    setEditMeas((m) => { const n = { ...m }; delete n[param]; return n; });
+  // ---- dimension instance editing ----
+  const addInstance = (base) =>
+    setEditFamilies((f) => ({ ...f, [base]: [...f[base], emptyInstance()] }));
 
-  const buildMeasPayload = () => {
+  const removeInstance = (base, idx) =>
+    setEditFamilies((f) => {
+      if (idx === 0) return f;
+      return { ...f, [base]: f[base].filter((_, i) => i !== idx) };
+    });
+
+  const updateInstance = (base, idx, field, value) =>
+    setEditFamilies((f) => ({
+      ...f,
+      [base]: f[base].map((inst, i) => (i === idx ? { ...inst, [field]: value } : inst)),
+    }));
+
+  const buildMeasurementPayload = () => {
     const out = {};
-    for (const [param, rows] of Object.entries(editMeas)) {
-      const cleaned = rows
-        .filter((r) => r.min_value !== "" || r.max_value !== "")
-        .map((r) => ({
-          min_value: r.min_value === "" ? null : Math.abs(Number(r.min_value)),
-          max_value: r.max_value === "" ? null : Math.abs(Number(r.max_value)),
-        }));
-      if (cleaned.length) out[param] = cleaned;
+    for (const fam of FAMILIES) {
+      editFamilies[fam.base].forEach((inst, i) => {
+        const entry = {};
+        if (inst.value !== "") entry.value = Math.abs(Number(inst.value));
+        if (inst.min_value !== "") entry.min_value = Math.abs(Number(inst.min_value));
+        if (inst.max_value !== "") entry.max_value = Math.abs(Number(inst.max_value));
+        if (inst.calibration_factor !== "") entry.calibration_factor = Number(inst.calibration_factor);
+        if (Object.keys(entry).length) out[`${fam.base}${i + 1}`] = entry;
+      });
     }
     return out;
   };
 
-  const handleEditSave = () => {
-    for (const [param, rows] of Object.entries(editMeas)) {
-      for (const r of rows) {
-        if (r.min_value !== "" && r.max_value !== "" &&
-            Number(r.min_value) > Number(r.max_value)) {
-          notify(`${param}: Min cannot be greater than Max.`, "error");
-          return;
+  const validateMinMax = () => {
+    for (const fam of FAMILIES) {
+      for (let i = 0; i < editFamilies[fam.base].length; i++) {
+        const inst = editFamilies[fam.base][i];
+        if (inst.min_value !== "" && inst.max_value !== "" &&
+            Number(inst.min_value) > Number(inst.max_value)) {
+          return `${fam.label} (instance ${i + 1}): Min cannot be greater than Max.`;
         }
       }
     }
+    return null;
+  };
+
+  // ---- defect editing ----
+  const addDefect = () => setEditDefects((d) => [...d, emptyDefect()]);
+  const removeDefect = (idx) => setEditDefects((d) => (idx === 0 ? d : d.filter((_, i) => i !== idx)));
+  const updateDefect = (idx, field, value) =>
+    setEditDefects((d) => d.map((item, i) => (i === idx ? { ...item, [field]: value } : item)));
+
+  const buildDefectPayload = () => {
+    const out = {};
+    editDefects.forEach((d, i) => {
+      if (d.defect_name.trim()) {
+        out[`d${i + 1}`] = {
+          defect_name: d.defect_name.trim(),
+          ...(d.confidence_threshold !== "" && { confidence_threshold: Number(d.confidence_threshold) }),
+        };
+      }
+    });
+    return out;
+  };
+
+  const handleEditSave = () => {
+    const err = validateMinMax();
+    if (err) { notify(err, "error"); return; }
 
     const num = (v) => (v === "" || v === null || v === undefined ? null : Number(v));
     const payload = {
@@ -226,18 +283,11 @@ export default function PartDetails({ loginData }) {
       parts_metadata: editPart.parts_metadata || null,
       image: editPart.image || null,
       part_weight: num(editPart.part_weight),
-      part_height: num(editPart.part_height),
-      part_width: num(editPart.part_width),
-      part_inner_diameter: num(editPart.part_inner_diameter),
-      part_outer_diameter: num(editPart.part_outer_diameter),
-      part_length: num(editPart.part_length),
-      part_angle: num(editPart.part_angle),
-      part_arch_length: num(editPart.part_arch_length),
-      part_sector: num(editPart.part_sector),
       part_co_planarity: !!editPart.part_co_planarity,
       part_parallelity: !!editPart.part_parallelity,
       part_concentricity: !!editPart.part_concentricity,
-      measurement_parameters: buildMeasPayload(),
+      measurement_parameters: buildMeasurementPayload(),
+      defect_parameters: buildDefectPayload(),
     };
 
     axios
@@ -245,7 +295,7 @@ export default function PartDetails({ loginData }) {
       .then(() => {
         setEditOpen(false);
         notify(`Part "${editPart.part_code}" updated successfully`);
-        fetchParts(selectedCategory, (newParts) => {
+        fetchParts(selectedCategory, selectedMode, (newParts) => {
           if (searchTerm) {
             setFilteredParts(
               newParts.filter(
@@ -269,7 +319,7 @@ export default function PartDetails({ loginData }) {
         setDeleteOpen(false);
         notify(`Part "${partToDelete.part_code}" deleted`, "error");
         setPartToDelete(null);
-        fetchParts(selectedCategory);
+        fetchParts(selectedCategory, selectedMode);
       })
       .catch(() => notify("Failed to delete part", "error"));
   };
@@ -293,10 +343,8 @@ export default function PartDetails({ loginData }) {
     }
   };
 
-  const measAvailable = MEASURABLE_PARAMS.filter((p) => !editMeas[p]);
-
   return (
-   <Box sx={{minHeight: "100vh",width: "100%",flex: 1,overflowY: "auto",bgcolor: "background.default",}}>
+    <Box sx={{ minHeight: "100vh", width: "100%", flex: 1, overflowY: "auto", bgcolor: "background.default" }}>
       <Box sx={{ maxWidth: 1400, mx: "auto", px: { xs: 1.5, sm: 3, md: 4 }, py: { xs: 2, md: 3 } }}>
 
         <Typography variant="h5" sx={{ fontWeight: 700, color: "text.primary", mb: 0.5 }}>
@@ -322,7 +370,16 @@ export default function PartDetails({ loginData }) {
               </Select>
             </FormControl>
 
-            {/* Scanner input (bypasses virtual keyboard) */}
+            <FormControl sx={{ minWidth: 200, ...inputSx }}>
+              <InputLabel>Mode of Operation</InputLabel>
+              <Select value={selectedMode} onChange={handleModeChange} label="Mode of Operation">
+                <MenuItem value="">All Modes</MenuItem>
+                {MODES.map((m) => (
+                  <MenuItem key={m} value={m}>{m}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
             <Box sx={{
               display: "flex", alignItems: "center", gap: 1, px: 1.5, height: 44,
               bgcolor: "accent.light", borderRadius: 1.5, border: 1, borderColor: "divider",
@@ -375,10 +432,10 @@ export default function PartDetails({ loginData }) {
         {/* Table */}
         <TableContainer component={Paper} elevation={0} sx={{
           borderRadius: 2, border: 1, borderColor: "divider",
-          maxHeight: 700, overflowY: "auto",
+          overflowX: "auto",
           "& .MuiTableCell-root": { padding: "10px 8px" },
         }}>
-          <Table stickyHeader sx={{ width: "100%", tableLayout: "fixed" }}>
+          <Table sx={{ width: "100%", minWidth: 900, tableLayout: "fixed" }}>
             <TableHead>
               <TableRow sx={{ "& th": { bgcolor: "accent.light", fontWeight: 700, color: "text.primary" } }}>
                 <TableCell align="center" sx={{ width: "5%" }}>#</TableCell>
@@ -386,9 +443,9 @@ export default function PartDetails({ loginData }) {
                 <TableCell align="center" sx={{ width: "14%" }}>Part Code</TableCell>
                 <TableCell align="center" sx={{ width: "9%" }}>Image</TableCell>
                 <TableCell align="center" sx={{ width: "12%" }}>Category</TableCell>
-                <TableCell align="center" sx={{ width: "11%" }}>AI Model</TableCell>
-                <TableCell align="center" sx={{ width: "11%" }}>Checks</TableCell>
-                <TableCell align="center" sx={{ width: "10%" }}>Limits</TableCell>
+                <TableCell align="center" sx={{ width: "10%" }}>Mode</TableCell>
+                <TableCell align="center" sx={{ width: "12%" }}>Checks</TableCell>
+                <TableCell align="center" sx={{ width: "10%" }}>Params / Defects</TableCell>
                 <TableCell align="center" sx={{ width: "12%" }}>Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -396,7 +453,8 @@ export default function PartDetails({ loginData }) {
               {filteredParts.length > 0 ? (
                 filteredParts.map((part, index) => {
                   const checks = BOOLEAN_FLAGS.filter((f) => part[f.key]).map((f) => f.label);
-                  const limitCount = Object.keys(part.measurement_parameters || {}).length;
+                  const paramCount = Object.keys(part.measurement_parameters || {}).length;
+                  const defectCount = Object.keys(part.defect_parameters || {}).length;
                   return (
                     <TableRow key={part.part_id} hover>
                       <TableCell align="center">{index + 1}</TableCell>
@@ -410,16 +468,14 @@ export default function PartDetails({ loginData }) {
                       </TableCell>
                       <TableCell align="center">{part.category_name || "N/A"}</TableCell>
                       <TableCell align="center">
-                        {part.model_name
-                          ? <Chip size="small" label={part.model_name}
-                              sx={{ bgcolor: "accent.light", color: "text.primary" }} />
-                          : "—"}
+                        <Chip size="small" label={part.mode_of_operation || "—"}
+                          sx={{ bgcolor: "accent.light", color: "text.primary" }} />
                       </TableCell>
                       <TableCell align="center" sx={{ fontSize: "0.78rem", color: "text.secondary" }}>
                         {checks.length ? checks.join(", ") : "—"}
                       </TableCell>
                       <TableCell align="center" sx={{ fontSize: "0.8rem", color: "text.secondary" }}>
-                        {limitCount ? `${limitCount} param${limitCount > 1 ? "s" : ""}` : "—"}
+                        {paramCount ? `${paramCount} dim` : "—"}{defectCount ? `, ${defectCount} defect` : ""}
                       </TableCell>
                       <TableCell align="center">
                         <Stack direction="row" spacing={1} justifyContent="center">
@@ -463,33 +519,21 @@ export default function PartDetails({ loginData }) {
                     value={editPart.part_code || ""} />
                   <TextField label="Category" fullWidth disabled variant="filled"
                     value={editPart.category_name || ""} />
-                     <TextField label="AI Model Name (reference)" fullWidth disabled variant="filled"
-                  value={editPart.model_name || ""} />
+                  <TextField label="Mode of Operation" fullWidth disabled variant="filled"
+                    value={editPart.mode_of_operation || ""} />
                 </Stack>
                 <TextField label="Parts Metadata" fullWidth sx={inputSx}
                   value={editPart.parts_metadata || ""} onChange={setEditField("parts_metadata")} />
-               
               </Stack>
             </Box>
 
             <Box>
               <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5 }}>
-                Part Dimensions
+                Weight
               </Typography>
-              <Box sx={{
-                display: "grid",
-                gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", md: "repeat(3, 1fr)" },
-                gap: 2,
-              }}>
-                {DIMENSION_FIELDS.map(({ key, label, unit }) => (
-                  <TextField key={key} label={label} sx={inputSx}
-                    value={editPart[key] ?? ""} onChange={setEditNum(key)}
-                    inputProps={{ inputMode: "decimal" }}
-                    InputProps={unit ? {
-                      endAdornment: <InputAdornment position="end">{unit}</InputAdornment>,
-                    } : undefined} />
-                ))}
-              </Box>
+              <TextField label="Weight (g)" sx={{ ...inputSx, maxWidth: 260 }}
+                value={editPart.part_weight ?? ""} onChange={setEditWeight}
+                inputProps={{ inputMode: "decimal" }} />
             </Box>
 
             <Box>
@@ -507,54 +551,69 @@ export default function PartDetails({ loginData }) {
 
             <Box>
               <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
-                Measurement Parameters
+                Part Parameters
               </Typography>
               <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mb: 1.5 }}>
-                Min/max limits per parameter. Negative values are not allowed.
+                Each family supports unlimited instances. Negative values are not allowed.
               </Typography>
 
-              {measAvailable.length > 0 && (
-                <FormControl sx={{ minWidth: 260, mb: 2, ...inputSx }}>
-                  <InputLabel>Add parameter</InputLabel>
-                  <Select value="" label="Add parameter"
-                    onChange={(e) => e.target.value && addMeasParam(e.target.value)}>
-                    {measAvailable.map((p) => (
-                      <MenuItem key={p} value={p}>{p}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              )}
-
-              {Object.entries(editMeas).map(([param, rows]) => (
-                <Box key={param} sx={{
-                  border: 1, borderColor: "divider", borderRadius: 1.5,
-                  p: 2, mb: 2, bgcolor: "accent.light",
-                }}>
+              {FAMILIES.map((fam) => (
+                <Box key={fam.base} sx={{ border: 1, borderColor: "divider", borderRadius: 1.5, p: 2, mb: 2 }}>
                   <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                    <Typography sx={{ fontWeight: 700, fontSize: "0.9rem" }}>{param}</Typography>
-                    <IconButton size="small" onClick={() => removeMeasParam(param)}>✕</IconButton>
+                    <Typography sx={{ fontWeight: 700, fontSize: "0.9rem" }}>
+                      {fam.label}{fam.unit ? ` (${fam.unit})` : ""}
+                    </Typography>
+                    <Chip size="small"
+                      label={`${editFamilies[fam.base]?.length || 1} instance${(editFamilies[fam.base]?.length || 1) > 1 ? "s" : ""}`}
+                      sx={{ bgcolor: "accent.light" }} />
                   </Stack>
-                  {rows.map((row, i) => (
+
+                  {(editFamilies[fam.base] || [emptyInstance()]).map((inst, i) => (
                     <Box key={i} sx={{
-                      display: "grid", gridTemplateColumns: "1fr 1fr auto",
+                      display: "grid", gridTemplateColumns: "auto 1fr 1fr 1fr 1fr auto",
                       gap: 1, mb: 1, alignItems: "center",
                     }}>
-                      <TextField label="Min" value={row.min_value} sx={inputSx}
-                        inputProps={{ inputMode: "decimal", min: 0 }}
-                        onChange={(e) => nonNegative(e.target.value) &&
-                          updateMeasRow(param, i, "min_value", e.target.value)} />
-                      <TextField label="Max" value={row.max_value} sx={inputSx}
-                        inputProps={{ inputMode: "decimal", min: 0 }}
-                        onChange={(e) => nonNegative(e.target.value) &&
-                          updateMeasRow(param, i, "max_value", e.target.value)} />
-                      <IconButton size="small" onClick={() => removeMeasRow(param, i)}>✕</IconButton>
+                      <Typography variant="caption" sx={{ color: "text.secondary", minWidth: 60 }}>
+                        {fam.base}{i + 1}
+                      </Typography>
+                      <TextField label="Value" value={inst.value} sx={inputSx}
+                        onChange={(e) => nonNegative(e.target.value) && updateInstance(fam.base, i, "value", e.target.value)} />
+                      <TextField label="Min" value={inst.min_value} sx={inputSx}
+                        onChange={(e) => nonNegative(e.target.value) && updateInstance(fam.base, i, "min_value", e.target.value)} />
+                      <TextField label="Max" value={inst.max_value} sx={inputSx}
+                        onChange={(e) => nonNegative(e.target.value) && updateInstance(fam.base, i, "max_value", e.target.value)} />
+                      <TextField label="Cal. Factor" value={inst.calibration_factor} sx={inputSx}
+                        onChange={(e) => nonNegative(e.target.value) && updateInstance(fam.base, i, "calibration_factor", e.target.value)} />
+                      {i > 0 && <IconButton size="small" onClick={() => removeInstance(fam.base, i)}>✕</IconButton>}
                     </Box>
                   ))}
-                  <Button size="small" color="primary" onClick={() => addMeasRow(param)}>
-                    + Add limit
+
+                  <Button size="small" color="primary" onClick={() => addInstance(fam.base)}>
+                    + Add another {fam.label.toLowerCase()} ({fam.base}{(editFamilies[fam.base]?.length || 1) + 1})
                   </Button>
                 </Box>
               ))}
+            </Box>
+
+            <Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                Defects
+              </Typography>
+              <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mb: 1.5 }}>
+                Each defect this part is checked for, with an optional confidence threshold.
+              </Typography>
+              {editDefects.map((d, i) => (
+                <Box key={i} sx={{ display: "grid", gridTemplateColumns: "auto 1fr 1fr auto", gap: 1, mb: 1, alignItems: "center" }}>
+                  <Typography variant="caption" sx={{ color: "text.secondary", minWidth: 30 }}>d{i + 1}</Typography>
+                  <TextField label="Defect name" value={d.defect_name} sx={inputSx}
+                    onChange={(e) => updateDefect(i, "defect_name", e.target.value)} />
+                  <TextField label="Confidence threshold" value={d.confidence_threshold} sx={inputSx}
+                    inputProps={{ inputMode: "decimal" }}
+                    onChange={(e) => nonNegative(e.target.value) && updateDefect(i, "confidence_threshold", e.target.value)} />
+                  {i > 0 && <IconButton size="small" onClick={() => removeDefect(i)}>✕</IconButton>}
+                </Box>
+              ))}
+              <Button size="small" color="primary" onClick={addDefect}>+ Add another defect</Button>
             </Box>
 
             <Box>

@@ -325,36 +325,23 @@ async def bulk_upload_template(mode: str = Query(...)):
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
-    
+
 
 def _part_detail_dict(part: Part, db: Session) -> dict:
-    ai_model_defects = None
-    if part.ai_model_id:
-        ai_model = db.get(AIModel, part.ai_model_id)
-        if ai_model:
-            ai_model_defects = ai_model.defects
-
     return {
         "part_code": part.part_code,
         "part_name": part.part_name,
         "category": part.category.category_name if part.category else "N/A",
+        "category_id": part.category_id,
         "parts_metadata": part.parts_metadata,
         "mode_of_operation": part.mode_of_operation,
-        "ai_model_id": part.ai_model_id,
         "part_weight": part.part_weight,
-        "part_height": part.part_height,
-        "part_width": part.part_width,
-        "part_inner_diameter": part.part_inner_diameter,
-        "part_outer_diameter": part.part_outer_diameter,
         "measurement_parameters": part.measurement_parameters,
-        "part_length": part.part_length,
-        "part_angle": part.part_angle,
-        "part_arch_length": part.part_arch_length,
-        "part_sector": part.part_sector,
+        "defect_parameters": part.defect_parameters,
         "part_co_planarity": part.part_co_planarity,
         "part_parallelity": part.part_parallelity,
         "part_concentricity": part.part_concentricity,
-        "ai_model_defects": ai_model_defects,
+        "image": part.image.decode("utf-8") if part.image else None,
     }
 
 
@@ -1347,11 +1334,7 @@ import asyncio  # placed here to keep the notifier() coroutine above self-contai
 # ---- routers.py ----
 
 def _part_row(part: Part, db: Session) -> dict:
-    """Flat dict for the Part Details table / edit dialog."""
-    model_name = None
-    if part.ai_model_id:
-        m = db.get(AIModel, part.ai_model_id)
-        model_name = m.model_name if m else None
+    """Flat dict used by parts/by-category, part-by-code, and update_part."""
     return {
         "part_id": part.part_id,
         "part_code": part.part_code,
@@ -1359,32 +1342,41 @@ def _part_row(part: Part, db: Session) -> dict:
         "category_id": part.category_id,
         "category_name": part.category.category_name if part.category else None,
         "parts_metadata": part.parts_metadata,
-        "model_name": model_name,
+        "mode_of_operation": part.mode_of_operation,
         "image": part.image.decode("utf-8") if part.image else None,
         "part_weight": part.part_weight,
-        "part_height": part.part_height,
-        "part_width": part.part_width,
-        "part_inner_diameter": part.part_inner_diameter,
-        "part_outer_diameter": part.part_outer_diameter,
-        "part_length": part.part_length,
-        "part_angle": part.part_angle,
-        "part_arch_length": part.part_arch_length,
-        "part_sector": part.part_sector,
         "part_co_planarity": part.part_co_planarity,
         "part_parallelity": part.part_parallelity,
         "part_concentricity": part.part_concentricity,
         "measurement_parameters": part.measurement_parameters,
+        "defect_parameters": part.defect_parameters,
     }
 
+
+# @router.get("/parts/by-category")
+# def parts_by_category(
+#     category_id: Optional[int] = Query(None),
+#     db: Session = Depends(get_db),
+# ):
+#     q = db.query(Part)
+#     if category_id:
+#         q = q.filter(Part.category_id == category_id)
+#     return [_part_row(p, db) for p in q.order_by(Part.part_id).all()]
 
 @router.get("/parts/by-category")
 def parts_by_category(
     category_id: Optional[int] = Query(None),
+    mode: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
+    if mode is not None and mode not in VALID_MODES:
+        raise HTTPException(status_code=400, detail=f"Invalid mode: {mode}")
+
     q = db.query(Part)
     if category_id:
         q = q.filter(Part.category_id == category_id)
+    if mode:
+        q = q.filter(Part.mode_of_operation == mode)
     return [_part_row(p, db) for p in q.order_by(Part.part_id).all()]
 
 
@@ -1395,10 +1387,6 @@ def update_part(part_id: int, payload: PartUpdate, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="Part not found")
 
     data = payload.model_dump(exclude_unset=True)
-
-    # model_name -> ai_model_id (case-insensitive, creates stub if new)
-    if "model_name" in data:
-        part.ai_model_id = _resolve_ai_model_id(db, data.pop("model_name"), None)
 
     if "image" in data:
         img = data.pop("image")
@@ -1417,12 +1405,30 @@ def download_parts_data(db: Session = Depends(get_db)):
     rows = []
     for p in db.query(Part).order_by(Part.part_id).all():
         r = _part_row(p, db)
-        r.pop("image", None)                      # don't dump base64 into Excel
+        r.pop("image", None)  # don't dump base64 into Excel
+
+        # flatten measurement_parameters: {"length1": {"value":..,"min_value":..,"max_value":..,"calibration_factor":..}}
         mp = r.pop("measurement_parameters", None) or {}
-        for param, limits in mp.items():
-            if limits:
-                r[f"{param}_min"] = limits[0].get("min_value")
-                r[f"{param}_max"] = limits[0].get("max_value")
+        for key, entry in mp.items():
+            if not isinstance(entry, dict):
+                continue
+            r[key] = entry.get("value")
+            if "min_value" in entry:
+                r[f"{key}_min"] = entry.get("min_value")
+            if "max_value" in entry:
+                r[f"{key}_max"] = entry.get("max_value")
+            if "calibration_factor" in entry:
+                r[f"{key}_cal"] = entry.get("calibration_factor")
+
+        # flatten defect_parameters: {"d1": {"defect_name":"dent","confidence_threshold":0.6}}
+        dp = r.pop("defect_parameters", None) or {}
+        for key, entry in dp.items():
+            if not isinstance(entry, dict):
+                continue
+            r[f"{key}_name"] = entry.get("defect_name")
+            if "confidence_threshold" in entry:
+                r[f"{key}_threshold"] = entry.get("confidence_threshold")
+
         rows.append(r)
 
     df = pd.DataFrame(rows if rows else [{"Message": "No parts found"}])

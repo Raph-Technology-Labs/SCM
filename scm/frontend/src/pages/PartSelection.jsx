@@ -256,23 +256,32 @@ const PartSelection = () => {
     }
   };
 
-  // Flatten measurement_parameters ({ param_name: [MeasurementLimit,...] }) into rows.
+  // Flatten measurement_parameters into rows.
+  // New schema shape: one flat object per family+instance key, e.g.
+  //   { "length1": {"value":40.0,"min_value":39.5,"max_value":40.5,
+  //                 "calibration_factor":1.002},
+  //     "od1": {...} }
+  // (No `camera` field anymore; `value` and `calibration_factor` are new.)
   const measurementRows = React.useMemo(() => {
     const mp = selectedPartDetails?.measurement_parameters;
     if (!mp || typeof mp !== "object") return [];
-    return Object.entries(mp).flatMap(([paramName, limits]) =>
-      (Array.isArray(limits) ? limits : [limits]).map((limit, idx) => ({
-        key: `${paramName}-${idx}`,
-        parameter: paramName,
-        min_value: limit?.min_value,
-        max_value: limit?.max_value,
-        camera: limit?.camera,
-      })),
-    );
+    return Object.entries(mp).map(([paramName, limit]) => ({
+      key: paramName,
+      parameter: paramName, // e.g. "length1", "od1"
+      value: limit?.value,
+      min_value: limit?.min_value,
+      max_value: limit?.max_value,
+      calibration_factor: limit?.calibration_factor,
+    }));
   }, [selectedPartDetails]);
 
-  const defectNames = selectedPartDetails?.ai_model_defects
-    ? Object.keys(selectedPartDetails.ai_model_defects)
+  // Defect names now come from defect_parameters (config), shaped
+  //   { "d1": {"defect_name":"dent","confidence_threshold":0.6}, "d2": {...} }
+  // so the human-readable name is nested, not the key.
+  const defectNames = selectedPartDetails?.defect_parameters
+    ? Object.values(selectedPartDetails.defect_parameters)
+        .map((d) => d?.defect_name)
+        .filter(Boolean)
     : [];
 
   const detailRows = [
@@ -607,7 +616,7 @@ const PartSelection = () => {
                         ))}
                       </Box>
                     ) : (
-                      "No AI model linked to this part yet"
+                      "No defects configured for this part yet"
                     )}
                   </TableCell>
                 </TableRow>
@@ -635,8 +644,8 @@ const PartSelection = () => {
                           {row.parameter}
                         </TableCell>
                         <TableCell>
-                          Min: {row.min_value ?? "—"} &nbsp;|&nbsp; Max: {row.max_value ?? "—"}
-                          {row.camera != null && <> &nbsp;|&nbsp; Camera: {row.camera}</>}
+                          Value: {row.value ?? "—"} &nbsp;|&nbsp; Min: {row.min_value ?? "—"} &nbsp;|&nbsp; Max: {row.max_value ?? "—"}
+                          {row.calibration_factor != null && <> &nbsp;|&nbsp; Cal: {row.calibration_factor}</>}
                         </TableCell>
                       </TableRow>
                     ))

@@ -29,11 +29,11 @@ const MOCK_SESSION = {
   part_code: "PC-2002",
   part_name: "Sample Casting Block",
   session_start: new Date().toISOString(),
-  ai_model_defects: {
-    dent: { threshold: 0.6, camera: 1 },
-    scratch: { threshold: 0.5, camera: 1 },
-    crack: { threshold: 0.7, camera: 2 },
-    thread_missing: { threshold: 0.8, camera: 2 },
+  defect_parameters: {
+    d1: { defect_name: "dent", confidence_threshold: 0.6 },
+    d2: { defect_name: "scratch", confidence_threshold: 0.5 },
+    d3: { defect_name: "crack", confidence_threshold: 0.7 },
+    d4: { defect_name: "thread_missing", confidence_threshold: 0.8 },
   },
 };
 
@@ -94,6 +94,9 @@ const DefectDetectionPage = () => {
   const [sessionInfo, setSessionInfo] = useState(null);
   const [usingMockData, setUsingMockData] = useState(false);
   const [defectCounts, setDefectCounts] = useState({});
+  const [defectStatus, setDefectStatus] = useState({});
+  const [previewFrame, setPreviewFrame] = useState(null);
+  const [capturing, setCapturing] = useState(false);
 
   const { confirm, ConfirmDialog } = useConfirmDialog();
   const { setActiveSession, clearActiveSession } = useSession();
@@ -107,11 +110,11 @@ const DefectDetectionPage = () => {
         part_code: forwarded.part_code,
         part_name: forwardedName || forwarded.part_name,
         session_start: new Date().toISOString(),
-        ai_model_defects: forwarded.ai_model_defects || null,
+        defect_parameters: forwarded.defect_parameters || null,
       };
       setSessionInfo(info);
       setDefectCounts(
-        Object.fromEntries(Object.keys(info.ai_model_defects || {}).map((d) => [d, 0])),
+        Object.fromEntries(Object.keys(info.defect_parameters || {}).map((d) => [d, 0])),
       );
       return;
     }
@@ -122,21 +125,37 @@ const DefectDetectionPage = () => {
         const part = await axios.get(`${BASE_URL}/dashboard/part-details`, {
           params: { part_code: res.data.part_code },
         });
-        const info = { ...res.data, ai_model_defects: part.data.ai_model_defects };
+        const info = { ...res.data, defect_parameters: part.data.defect_parameters };
         setSessionInfo(info);
         setDefectCounts(
-          Object.fromEntries(Object.keys(info.ai_model_defects || {}).map((d) => [d, 0])),
+          Object.fromEntries(Object.keys(info.defect_parameters || {}).map((d) => [d, 0])),
         );
       })
       .catch(() => {
         setSessionInfo(MOCK_SESSION);
         setDefectCounts(
-          Object.fromEntries(Object.keys(MOCK_SESSION.ai_model_defects).map((d) => [d, 0])),
+          Object.fromEntries(Object.keys(MOCK_SESSION.defect_parameters).map((d) => [d, 0])),
         );
         setUsingMockData(true);
         toast.warn("No matching session found — showing preview data");
       });
   }, [sessionId, location.state]);
+
+  // Real session — one capture -> infer -> process -> result cycle per
+  // button press (not continuous), unlike Counting's polling loop.
+  const handleCapture = async () => {
+    if (usingMockData || capturing) return;
+    setCapturing(true);
+    try {
+      const res = await axios.post(`${BASE_URL}/dashboard/session/${sessionId}/capture`);
+      setDefectStatus(res.data?.defects || {});
+      if (res.data?.frame) setPreviewFrame(`data:image/jpeg;base64,${res.data.frame}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Capture failed");
+    } finally {
+      setCapturing(false);
+    }
+  };
 
   useEffect(() => {
     if (status !== "RUNNING" || !usingMockData) return;
@@ -162,6 +181,7 @@ const DefectDetectionPage = () => {
     setStatus("RUNNING");
     setActiveSession({ sessionId: Number(sessionId), mode: "Defect Detection" });
     toast.success("Defect detection started");
+    if (!usingMockData) handleCapture();
   };
 
   const stopSession = async () => {
@@ -173,6 +193,7 @@ const DefectDetectionPage = () => {
     }
     clearActiveSession();
     setStatus("STOPPED");
+    setPreviewFrame(null);
   };
 
   const handleStop = async () => {
@@ -193,15 +214,23 @@ const DefectDetectionPage = () => {
     : "--";
 
   const hasRun = status !== "READY";
-  const defectRows = Object.entries(sessionInfo?.ai_model_defects || {}).map(
-    ([name, config]) => {
-      const count = defectCounts[name] ?? 0;
-      const result = hasRun ? (count > 0 ? "NOK" : "OK") : null;
+  const defectRows = Object.entries(sessionInfo?.defect_parameters || {}).map(
+    ([instanceKey, config]) => {
+      if (usingMockData) {
+        const count = defectCounts[instanceKey] ?? 0;
+        const result = hasRun ? (count > 0 ? "NOK" : "OK") : null;
+        return {
+          name: config?.defect_name ?? instanceKey,
+          threshold: config?.confidence_threshold ?? null,
+          count,
+          result,
+        };
+      }
+      const result = hasRun ? (defectStatus[instanceKey] ?? null) : null;
       return {
-        name,
-        threshold: config?.threshold ?? null,
-        camera: config?.camera ?? null,
-        count,
+        name: config?.defect_name ?? instanceKey,
+        threshold: config?.confidence_threshold ?? null,
+        count: result === "NOK" ? 1 : 0,
         result,
       };
     },
@@ -279,15 +308,31 @@ const DefectDetectionPage = () => {
               transition: "border-color 0.3s ease",
             }}
           >
-            <Box
-              sx={{
-                position: "absolute",
-                inset: 0,
-                backgroundImage:
-                  "linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)",
-                backgroundSize: "28px 28px",
-              }}
-            />
+            {!(status === "RUNNING" && previewFrame) && (
+              <Box
+                sx={{
+                  position: "absolute",
+                  inset: 0,
+                  backgroundImage:
+                    "linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)",
+                  backgroundSize: "28px 28px",
+                }}
+              />
+            )}
+
+            {status === "RUNNING" && previewFrame && (
+              <img
+                src={previewFrame}
+                alt="Live camera feed"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                }}
+              />
+            )}
 
             {status === "RUNNING" && (
               <Box
@@ -308,22 +353,24 @@ const DefectDetectionPage = () => {
               />
             )}
 
-            <Box sx={{ position: "relative", textAlign: "center", zIndex: 1 }}>
-              <VideocamIcon
-                sx={{
-                  fontSize: 56,
-                  color: status === "RUNNING" ? "success.light" : "grey.600",
-                  mb: 1,
-                  transition: "color 0.3s ease",
-                }}
-              />
-              <Typography sx={{ color: "grey.300", fontWeight: 600, fontSize: 16 }}>
-                {status === "RUNNING" ? "Camera streaming…" : "Live Camera Feed"}
-              </Typography>
-              <Typography sx={{ color: "grey.500", fontSize: 13, mt: 0.5 }}>
-                (Waiting for Vision System)
-              </Typography>
-            </Box>
+            {!(status === "RUNNING" && previewFrame) && (
+              <Box sx={{ position: "relative", textAlign: "center", zIndex: 1 }}>
+                <VideocamIcon
+                  sx={{
+                    fontSize: 56,
+                    color: status === "RUNNING" ? "success.light" : "grey.600",
+                    mb: 1,
+                    transition: "color 0.3s ease",
+                  }}
+                />
+                <Typography sx={{ color: "grey.300", fontWeight: 600, fontSize: 16 }}>
+                  {status === "RUNNING" ? "Camera streaming…" : "Live Camera Feed"}
+                </Typography>
+                <Typography sx={{ color: "grey.500", fontSize: 13, mt: 0.5 }}>
+                  (Waiting for Vision System)
+                </Typography>
+              </Box>
+            )}
 
             {status === "RUNNING" && (
               <Chip
@@ -354,10 +401,12 @@ const DefectDetectionPage = () => {
                 boxShadow: "none",
                 "&:hover": { boxShadow: 2 },
               }}
-              onClick={handleStart}
-              disabled={status !== "READY"}
+              onClick={status === "READY" ? handleStart : handleCapture}
+              disabled={
+                status === "STOPPED" || (status === "RUNNING" && (usingMockData || capturing))
+              }
             >
-              Start
+              {status === "READY" ? "Start" : capturing ? "Capturing…" : "Capture"}
             </Button>
             <Button
               variant="contained"

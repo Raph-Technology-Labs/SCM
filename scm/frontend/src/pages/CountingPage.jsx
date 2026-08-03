@@ -88,6 +88,7 @@ const CountingPage = () => {
   const [count, setCount] = useState(0);
   const [sessionInfo, setSessionInfo] = useState(null);
   const [usingMockData, setUsingMockData] = useState(false);
+  const [previewFrame, setPreviewFrame] = useState(null);
 
   const { confirm, ConfirmDialog } = useConfirmDialog();
   const { setActiveSession, clearActiveSession } = useSession();
@@ -122,15 +123,36 @@ const CountingPage = () => {
       });
   }, [sessionId, location.state]);
 
+  // Self-scheduling loop (not a fixed setInterval) — each capture waits for
+  // the previous one to finish before firing the next. A fixed interval
+  // would fire a new /capture every 1s regardless of whether the last one
+  // (camera read + inference) had returned yet, and since the backend
+  // serializes captures per session, that backlog compounds into growing
+  // lag rather than a steady live feed.
   useEffect(() => {
     if (status !== "RUNNING" || usingMockData) return;
-    const interval = setInterval(() => {
+    let cancelled = false;
+    let timeoutId;
+
+    const tick = () => {
       axios
-        .get(`${BASE_URL}/dashboard/session/${sessionId}/live`)
-        .then((res) => setCount(res.data.count))
-        .catch(() => {});
-    }, 1000);
-    return () => clearInterval(interval);
+        .post(`${BASE_URL}/dashboard/session/${sessionId}/capture`)
+        .then((res) => {
+          if (cancelled) return;
+          setCount(res.data.count);
+          if (res.data.frame) setPreviewFrame(`data:image/jpeg;base64,${res.data.frame}`);
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) timeoutId = setTimeout(tick, 200);
+        });
+    };
+    tick();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
   }, [sessionId, status, usingMockData]);
 
   // Safety: if this page unmounts (e.g. component removed for any reason)
@@ -161,6 +183,7 @@ const CountingPage = () => {
     }
     clearActiveSession();
     setStatus("STOPPED");
+    setPreviewFrame(null);
   };
 
   const handleStop = async () => {
@@ -242,15 +265,31 @@ const CountingPage = () => {
               transition: "border-color 0.3s ease",
             }}
           >
-            <Box
-              sx={{
-                position: "absolute",
-                inset: 0,
-                backgroundImage:
-                  "linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)",
-                backgroundSize: "28px 28px",
-              }}
-            />
+            {!(status === "RUNNING" && previewFrame) && (
+              <Box
+                sx={{
+                  position: "absolute",
+                  inset: 0,
+                  backgroundImage:
+                    "linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)",
+                  backgroundSize: "28px 28px",
+                }}
+              />
+            )}
+
+            {status === "RUNNING" && previewFrame && (
+              <img
+                src={previewFrame}
+                alt="Live camera feed"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                }}
+              />
+            )}
 
             {status === "RUNNING" && (
               <Box
@@ -271,22 +310,24 @@ const CountingPage = () => {
               />
             )}
 
-            <Box sx={{ position: "relative", textAlign: "center", zIndex: 1 }}>
-              <VideocamIcon
-                sx={{
-                  fontSize: 56,
-                  color: status === "RUNNING" ? "success.light" : "grey.600",
-                  mb: 1,
-                  transition: "color 0.3s ease",
-                }}
-              />
-              <Typography sx={{ color: "grey.300", fontWeight: 600, fontSize: 16 }}>
-                {status === "RUNNING" ? "Camera streaming…" : "Live Camera Feed"}
-              </Typography>
-              <Typography sx={{ color: "grey.500", fontSize: 13, mt: 0.5 }}>
-                (Waiting for Vision System)
-              </Typography>
-            </Box>
+            {!(status === "RUNNING" && previewFrame) && (
+              <Box sx={{ position: "relative", textAlign: "center", zIndex: 1 }}>
+                <VideocamIcon
+                  sx={{
+                    fontSize: 56,
+                    color: status === "RUNNING" ? "success.light" : "grey.600",
+                    mb: 1,
+                    transition: "color 0.3s ease",
+                  }}
+                />
+                <Typography sx={{ color: "grey.300", fontWeight: 600, fontSize: 16 }}>
+                  {status === "RUNNING" ? "Camera streaming…" : "Live Camera Feed"}
+                </Typography>
+                <Typography sx={{ color: "grey.500", fontSize: 13, mt: 0.5 }}>
+                  (Waiting for Vision System)
+                </Typography>
+              </Box>
+            )}
 
             {status === "RUNNING" && (
               <Chip

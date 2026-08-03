@@ -104,6 +104,8 @@ const MeasurementPage = () => {
   const [sessionInfo, setSessionInfo] = useState(null);
   const [usingMockData, setUsingMockData] = useState(false);
   const [measuredValues, setMeasuredValues] = useState({});
+  const [previewFrame, setPreviewFrame] = useState(null);
+  const [capturing, setCapturing] = useState(false);
 
   const { confirm, ConfirmDialog } = useConfirmDialog();
   const { setActiveSession, clearActiveSession } = useSession();
@@ -172,6 +174,30 @@ const MeasurementPage = () => {
     return () => clearInterval(interval);
   }, [status, usingMockData, paramRows]);
 
+  // Real session — one capture -> infer -> measure -> result cycle per
+  // button press (not continuous), unlike Counting's polling loop.
+  const handleCapture = async () => {
+    if (usingMockData || capturing) return;
+    setCapturing(true);
+    try {
+      const res = await axios.post(`${BASE_URL}/dashboard/session/${sessionId}/capture`);
+      const features = res.data?.features || {};
+      setMeasuredValues((prev) => {
+        const next = { ...prev };
+        paramRows.forEach((row) => {
+          const measured = features[row.parameter]?.value_mm;
+          if (measured != null) next[row.key] = measured;
+        });
+        return next;
+      });
+      if (res.data?.frame) setPreviewFrame(`data:image/jpeg;base64,${res.data.frame}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Capture failed");
+    } finally {
+      setCapturing(false);
+    }
+  };
+
   useEffect(() => {
     return () => {
       if (status === "RUNNING") clearActiveSession();
@@ -183,6 +209,7 @@ const MeasurementPage = () => {
     setStatus("RUNNING");
     setActiveSession({ sessionId: Number(sessionId), mode: "Measurement" });
     toast.success("Measurement started");
+    if (!usingMockData) handleCapture();
   };
 
   const stopSession = async () => {
@@ -194,6 +221,7 @@ const MeasurementPage = () => {
     }
     clearActiveSession();
     setStatus("STOPPED");
+    setPreviewFrame(null);
   };
 
   const handleStop = async () => {
@@ -292,15 +320,31 @@ const MeasurementPage = () => {
               transition: "border-color 0.3s ease",
             }}
           >
-            <Box
-              sx={{
-                position: "absolute",
-                inset: 0,
-                backgroundImage:
-                  "linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)",
-                backgroundSize: "28px 28px",
-              }}
-            />
+            {!(status === "RUNNING" && previewFrame) && (
+              <Box
+                sx={{
+                  position: "absolute",
+                  inset: 0,
+                  backgroundImage:
+                    "linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px)",
+                  backgroundSize: "28px 28px",
+                }}
+              />
+            )}
+
+            {status === "RUNNING" && previewFrame && (
+              <img
+                src={previewFrame}
+                alt="Live camera feed"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                }}
+              />
+            )}
 
             {status === "RUNNING" && (
               <Box
@@ -321,22 +365,24 @@ const MeasurementPage = () => {
               />
             )}
 
-            <Box sx={{ position: "relative", textAlign: "center", zIndex: 1 }}>
-              <VideocamIcon
-                sx={{
-                  fontSize: 56,
-                  color: status === "RUNNING" ? "success.light" : "grey.600",
-                  mb: 1,
-                  transition: "color 0.3s ease",
-                }}
-              />
-              <Typography sx={{ color: "grey.300", fontWeight: 600, fontSize: 16 }}>
-                {status === "RUNNING" ? "Camera streaming…" : "Live Camera Feed"}
-              </Typography>
-              <Typography sx={{ color: "grey.500", fontSize: 13, mt: 0.5 }}>
-                (Waiting for Vision System)
-              </Typography>
-            </Box>
+            {!(status === "RUNNING" && previewFrame) && (
+              <Box sx={{ position: "relative", textAlign: "center", zIndex: 1 }}>
+                <VideocamIcon
+                  sx={{
+                    fontSize: 56,
+                    color: status === "RUNNING" ? "success.light" : "grey.600",
+                    mb: 1,
+                    transition: "color 0.3s ease",
+                  }}
+                />
+                <Typography sx={{ color: "grey.300", fontWeight: 600, fontSize: 16 }}>
+                  {status === "RUNNING" ? "Camera streaming…" : "Live Camera Feed"}
+                </Typography>
+                <Typography sx={{ color: "grey.500", fontSize: 13, mt: 0.5 }}>
+                  (Waiting for Vision System)
+                </Typography>
+              </Box>
+            )}
 
             {status === "RUNNING" && (
               <Chip
@@ -367,10 +413,12 @@ const MeasurementPage = () => {
                 boxShadow: "none",
                 "&:hover": { boxShadow: 2 },
               }}
-              onClick={handleStart}
-              disabled={status !== "READY"}
+              onClick={status === "READY" ? handleStart : handleCapture}
+              disabled={
+                status === "STOPPED" || (status === "RUNNING" && (usingMockData || capturing))
+              }
             >
-              Start
+              {status === "READY" ? "Start" : capturing ? "Capturing…" : "Capture"}
             </Button>
             <Button
               variant="contained"

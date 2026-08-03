@@ -110,10 +110,12 @@ const PartSelection = () => {
 
   useEffect(() => {
     axios
-      .get(`${BASE_URL}/dashboard/categories`)
+      .get(`${BASE_URL}/dashboard/categories`, {
+        params: intendedMode ? { mode_of_operation: intendedMode } : {},
+      })
       .then((res) => setCategories(res.data))
       .catch(() => {});
-  }, []);
+  }, [intendedMode]);
 
   useEffect(() => {
     if (!selectedCategory) {
@@ -128,18 +130,25 @@ const PartSelection = () => {
     }
     axios
       .get(`${BASE_URL}/dashboard/parts`, {
-        params: { suggestion: "", category: selectedCategory },
+        params: {
+          suggestion: "",
+          category: selectedCategory,
+          ...(intendedMode ? { mode_of_operation: intendedMode } : {}),
+        },
       })
       .then((res) => setParts(res.data))
       .catch(() => setParts([]));
 
     axios
       .get(`${BASE_URL}/dashboard/part-count`, {
-        params: { category: selectedCategory },
+        params: {
+          category: selectedCategory,
+          ...(intendedMode ? { mode_of_operation: intendedMode } : {}),
+        },
       })
       .then((res) => setPartCount(res.data.count))
       .catch(() => setPartCount(null));
-  }, [selectedCategory, fromCalibration]);
+  }, [selectedCategory, fromCalibration, intendedMode]);
 
   useEffect(() => {
     if (!fromCalibration || !parts.length || selectedPart) return;

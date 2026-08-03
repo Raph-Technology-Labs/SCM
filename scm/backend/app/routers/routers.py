@@ -24,7 +24,6 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import pytz
-import redis
 import pandas as pd
 from fastapi import (
     APIRouter,
@@ -54,6 +53,7 @@ from app.schemas import (
 )
 from app.services.spreadsheet_importer import SpreadsheetCsvImporter, SpreadsheetExcelImporter
 from app.services.template_builder import build_template, MODE_SLUGS
+from app.pipeline.session_pipeline import PipelineRegistry
 from fastapi.responses import StreamingResponse
 # from app.routers.websocket_manager import get_websocket_manager
 # from app.utils.zpl import ZPLGenerator
@@ -769,7 +769,8 @@ async def create_session_and_start(
             status_code=400,
             detail=f"Part '{part.part_name}' is configured for {part.mode_of_operation}, not {mode_of_operation}",
         )
-
+    # import pdb;
+    # pdb.set_trace()
     session = CompanySession(
         part_id=part.part_id,
         part_code=part.part_code,
@@ -784,34 +785,13 @@ async def create_session_and_start(
     db.commit()
     db.refresh(session)
 
-    category = part.category.category_name if part.category else "unknown"
-
-    model = get_inference_engine()
-    model.initialize(
-        part_name=part.part_name,
-        category_name=category,
-        part_code=part.part_code,
-        session_id=session.id,
-        mode=mode_of_operation,
-        is_calibration=is_calibration,
-    )
-    model.stop_event.clear()
-    if model.processor:
-        model.processor.session_id = str(session.id)
-        logging.info(f"Updated processor with session_id: {session.id}")
-
-    r = redis.Redis(
-        host=os.getenv("REDIS_HOST", "localhost"), port=int(os.getenv("REDIS_PORT", "6379")), db=0
-    )
-    r.set(config.redis.key_count, 0)
-    r.publish("count_channel", 0)
-
-    if model.shared_count_ref is not None and model.count_lock:
-        with model.count_lock:
-            model.shared_count_ref["count"] = 0
-        if model.processor.enable_debug:
-            model.processor._init_debug_writer()
-            model.processor._init_raw_writer()
+    try:
+        await PipelineRegistry.create(session.id, mode_of_operation, part)
+    except Exception as e:
+        db.delete(session)
+        db.commit()
+        logging.error(f"Failed to start pipeline for session: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start pipeline: {e}")
 
     return {
         "message": "Session created and all systems started",
@@ -831,39 +811,39 @@ async def stop(request: Request, db: Session = Depends(get_db)):
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
 
-    inference = get_inference_engine()
-    plc = get_plc_manager()
-
     try:
-        if inference.is_running():
-            inference.stop()
-        if plc.is_initialized():
-            plc.stop()
-
-        r = redis.Redis(
-            host=os.getenv("REDIS_HOST", "localhost"), port=int(os.getenv("REDIS_PORT", "6379")), db=0
-        )
-        r.set(config.redis.key_count, 0)
-        r.publish("count_channel", 0)
-
-        if inference.shared_count_ref is not None and inference.count_lock:
-            with inference.count_lock:
-                inference.shared_count_ref["count"] = 0
-
-        if inference.processor:
-            inference.processor.cleanup()
-            inference.processor.reset()
+        await PipelineRegistry.remove(session_id)
 
         session = db.query(CompanySession).filter(CompanySession.id == session_id).first()
         if session:
             session.session_end = datetime.now(timezone.utc)
             db.commit()
 
-        return {"message": "Inference and PLC stopped. Count reset. Camera is still running."}
+        return {"message": "Pipeline stopped and session ended."}
 
     except Exception as e:
         logging.error(f"Error while stopping systems: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/session/{session_id}/capture")
+async def capture(session_id: int, db: Session = Depends(get_db)):
+    """One capture -> infer -> process -> persist cycle for the active
+    pipeline behind this session. This is what a mode page's Start button
+    drives, once per polling tick."""
+    pipeline = PipelineRegistry.get(session_id)
+    if pipeline is None:
+        raise HTTPException(status_code=404, detail="No active pipeline for this session")
+
+    session = db.query(CompanySession).filter(CompanySession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        return await pipeline.capture_and_process(db, session)
+    except Exception as e:
+        logging.error(f"Capture failed for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Capture failed: {e}")
 
 
 @router.post("/start")
@@ -923,6 +903,8 @@ def get_current_state():
 @router.post("/reset-count")
 async def reset_count():
     try:
+        import redis
+
         r = redis.Redis(
             host=os.getenv("REDIS_HOST", "localhost"), port=int(os.getenv("REDIS_PORT", "6379")), db=0
         )

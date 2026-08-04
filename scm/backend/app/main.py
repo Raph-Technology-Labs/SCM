@@ -24,11 +24,8 @@ app = FastAPI(title=settings.APP_NAME)
 # where the browser actually is relative to this machine.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ],
-    allow_origin_regex=r"http://(127\.0\.0\.1|100\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+):(5173|3000)",
+    allow_origins=["*"],
+    # allow_origin_regex=r"http://(127\.0\.0\.1|100\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+):(5173|3000)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

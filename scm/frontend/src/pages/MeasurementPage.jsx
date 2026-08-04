@@ -346,24 +346,6 @@ const MeasurementPage = () => {
               />
             )}
 
-            {status === "RUNNING" && (
-              <Box
-                sx={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  height: "2px",
-                  bgcolor: "success.main",
-                  boxShadow: "0 0 12px 2px rgba(22,163,74,0.7)",
-                  animation: "scan 2.4s linear infinite",
-                  "@keyframes scan": {
-                    "0%": { top: "6%" },
-                    "50%": { top: "94%" },
-                    "100%": { top: "6%" },
-                  },
-                }}
-              />
-            )}
 
             {!(status === "RUNNING" && previewFrame) && (
               <Box sx={{ position: "relative", textAlign: "center", zIndex: 1 }}>

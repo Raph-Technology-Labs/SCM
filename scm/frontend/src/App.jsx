@@ -5,6 +5,7 @@ import "react-toastify/dist/ReactToastify.css";
 import Login from "./pages/Login";
 import Layout from "./components/Layout";
 import NewSession from "./pages/NewSession";
+import Dashboard from "./pages/Dashboard";
 import PartSelection from "./pages/PartSelection"
 import CountingPage from "./pages/CountingPage";
 import MeasurementPage from "./pages/MeasurementPage";
@@ -54,7 +55,7 @@ export default function App() {
           }
         >
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<Page title="Dashboard" />} />
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/health-check" element={<HealthCheck />} />
           <Route path="/device-settings" element={<DeviceSettings />} />
           <Route path="/add-part" element={<AddNewPart loginData={loginData} />} />

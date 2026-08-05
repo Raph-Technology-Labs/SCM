@@ -39,7 +39,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, nulls_last
 from sqlalchemy.orm import Session
 
 from app.models.db import Category, CompanySession, Part, PartDefect, get_db
@@ -345,219 +345,223 @@ def _part_detail_dict(part: Part, db: Session) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Dashboard stats / recent jobs / report download
-# ---------------------------------------------------------------------------
-@router.get("/stats")
-def get_dashboard_stats(
-    time_filter: str = Query("all", enum=["today", "month", "all", "range"]),
-    start_date: str = None,
-    end_date: str = None,
-    db: Session = Depends(get_db),
-):
-    session_query = db.query(CompanySession)
+# # ---------------------------------------------------------------------------
+# # Dashboard stats / recent jobs / report download
+# # ---------------------------------------------------------------------------
+# @router.get("/stats")
+# def get_dashboard_stats(
+#     time_filter: str = Query("all", enum=["today", "month", "all", "range"]),
+#     start_date: str = None,
+#     end_date: str = None,
+#     db: Session = Depends(get_db),
+# ):
+#     session_query = db.query(CompanySession)
 
-    if time_filter == "today":
-        today = datetime.now().date()
-        session_query = session_query.filter(func.date(CompanySession.created_at) == today)
-    elif time_filter == "month":
-        first_day = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        session_query = session_query.filter(CompanySession.created_at >= first_day)
-    elif time_filter == "range":
-        if start_date and end_date:
-            start = datetime.strptime(start_date, "%Y-%m-%d")
-            end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
-            session_query = session_query.filter(
-                CompanySession.created_at >= start, CompanySession.created_at < end
-            )
+#     if time_filter == "today":
+#         today = datetime.now().date()
+#         session_query = session_query.filter(func.date(CompanySession.created_at) == today)
+#     elif time_filter == "month":
+#         first_day = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+#         session_query = session_query.filter(CompanySession.created_at >= first_day)
+#     elif time_filter == "range":
+#         if start_date and end_date:
+#             start = datetime.strptime(start_date, "%Y-%m-%d")
+#             end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+#             session_query = session_query.filter(
+#                 CompanySession.created_at >= start, CompanySession.created_at < end
+#             )
 
-    total_sessions = session_query.count()
-    total_counted_parts = (
-        session_query.with_entities(func.coalesce(func.sum(CompanySession.part_count), 0)).scalar()
-        or 0
-    )
-    total_parts_configured = db.query(func.count(Part.part_id)).scalar() or 0
+#     total_sessions = session_query.count()
+#     total_counted_parts = (
+#         session_query.with_entities(func.coalesce(func.sum(CompanySession.part_count), 0)).scalar()
+#         or 0
+#     )
+#     total_parts_configured = db.query(func.count(Part.part_id)).scalar() or 0
 
-    return {
-        "total_sessions": total_sessions,
-        "total_parts_configured": total_parts_configured,
-        "total_counted_parts": total_counted_parts,
-    }
-
-
-@router.get("/recent-jobs")
-def get_recent_jobs(
-    time_filter: str = Query("all", enum=["today", "month", "all", "range"]),
-    start_date: str = None,
-    end_date: str = None,
-    page: int = 1,
-    limit: int = 20,
-    db: Session = Depends(get_db),
-):
-    query = db.query(CompanySession)
-
-    if time_filter == "today":
-        today = datetime.now().date()
-        query = query.filter(func.date(CompanySession.created_at) == today)
-    elif time_filter == "month":
-        first_day = datetime.now().replace(day=1)
-        query = query.filter(CompanySession.created_at >= first_day)
-    elif time_filter == "range":
-        if not start_date or not end_date:
-            raise HTTPException(status_code=400, detail="Start and end dates required.")
-        start = datetime.strptime(start_date, "%Y-%m-%d")
-        end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
-        query = query.filter(CompanySession.created_at >= start, CompanySession.created_at < end)
-
-    offset = (page - 1) * limit
-    sessions = query.order_by(CompanySession.created_at.desc()).offset(offset).limit(limit).all()
-
-    ist = pytz.timezone("Asia/Kolkata")
-    results = []
-    for s in sessions:
-        start_time = (
-            s.session_start.replace(tzinfo=timezone.utc).astimezone(ist) if s.session_start else None
-        )
-        stop_time = (
-            s.session_end.replace(tzinfo=timezone.utc).astimezone(ist) if s.session_end else None
-        )
-        results.append(
-            {
-                "session_id": s.id,
-                "part_code": s.part.part_code if s.part else None,
-                "part_name": s.part_name,
-                "category": s.part.category.category_name if s.part and s.part.category else "N/A",
-                "mode_of_operation": s.part.mode_of_operation if s.part else None,
-                "total_count": s.part_count,
-                "start_time": start_time.isoformat() if start_time else None,
-                "stop_time": stop_time.isoformat() if stop_time else None,
-            }
-        )
-
-    return {"total": query.count(), "page": page, "limit": limit, "data": results}
+#     return {
+#         "total_sessions": total_sessions,
+#         "total_parts_configured": total_parts_configured,
+#         "total_counted_parts": total_counted_parts,
+#     }
 
 
-@router.get("/download-report")
-def download_report(
-    start_date: str = Query(..., description="Start date in YYYY-MM-DD"),
-    end_date: str = Query(..., description="End date in YYYY-MM-DD"),
-    format: str = Query("csv", enum=["csv", "pdf"]),
-    db: Session = Depends(get_db),
-):
-    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-    end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+# @router.get("/recent-jobs")
+# def get_recent_jobs(
+#     time_filter: str = Query("all", enum=["today", "month", "all", "range"]),
+#     start_date: str = None,
+#     end_date: str = None,
+#     page: int = 1,
+#     limit: int = 20,
+#     db: Session = Depends(get_db),
+# ):
+#     query = db.query(CompanySession)
 
-    sessions = (
-        db.query(CompanySession)
-        .filter(CompanySession.created_at >= start_dt)
-        .filter(CompanySession.created_at < end_dt + timedelta(days=1))
-        .order_by(CompanySession.created_at.asc())
-        .all()
-    )
+#     if time_filter == "today":
+#         today = datetime.now().date()
+#         query = query.filter(func.date(CompanySession.created_at) == today)
+#     elif time_filter == "month":
+#         first_day = datetime.now().replace(day=1)
+#         query = query.filter(CompanySession.created_at >= first_day)
+#     elif time_filter == "range":
+#         if not start_date or not end_date:
+#             raise HTTPException(status_code=400, detail="Start and end dates required.")
+#         start = datetime.strptime(start_date, "%Y-%m-%d")
+#         end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+#         query = query.filter(CompanySession.created_at >= start, CompanySession.created_at < end)
 
-    data = [
-        {
-            "S. No.": index + 1,
-            "Part Code": s.part.part_code if s.part else "N/A",
-            "Part Name": s.part_name,
-            "Category": s.part.category.category_name if s.part and s.part.category else "N/A",
-            "Mode": s.part.mode_of_operation if s.part else "N/A",
-            "Start Time": s.session_start.strftime("%Y-%m-%d %H:%M:%S") if s.session_start else "N/A",
-            "End Time": s.session_end.strftime("%Y-%m-%d %H:%M:%S") if s.session_end else "N/A",
-            "Total Count": s.part_count,
-        }
-        for index, s in enumerate(sessions)
-    ]
+#     offset = (page - 1) * limit
+#     sessions = query.order_by(CompanySession.created_at.desc()).offset(offset).limit(limit).all()
 
-    df = pd.DataFrame(data)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+#     ist = pytz.timezone("Asia/Kolkata")
+#     results = []
+#     for s in sessions:
+#         start_time = (
+#             s.session_start.replace(tzinfo=timezone.utc).astimezone(ist) if s.session_start else None
+#         )
+#         stop_time = (
+#             s.session_end.replace(tzinfo=timezone.utc).astimezone(ist) if s.session_end else None
+#         )
+#         results.append(
+#             {
+#                 "session_id": s.id,
+#                 "part_code": s.part.part_code if s.part else None,
+#                 "part_name": s.part_name,
+#                 "category": s.part.category.category_name if s.part and s.part.category else "N/A",
+#                 "mode_of_operation": s.part.mode_of_operation if s.part else None,
+#                 "total_count": s.part_count,
+#                 "start_time": start_time.isoformat() if start_time else None,
+#                 "stop_time": stop_time.isoformat() if stop_time else None,
+#             }
+#         )
 
-    if format == "csv":
-        file_path = f"report_{timestamp}.csv"
-        if df.empty:
-            df = pd.DataFrame([{"Message": "No data available for the selected date range"}])
-        df.to_csv(file_path, index=False)
-        return FileResponse(file_path, media_type="text/csv", filename=os.path.basename(file_path))
+#     return {"total": query.count(), "page": page, "limit": limit, "data": results}
 
-    # PDF generation kept as-is from the previous router — schema-independent.
-    os.makedirs("reports", exist_ok=True)
-    file_path = f"report_{timestamp}.pdf"
-    full_path = os.path.join("reports", file_path)
 
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.lib.units import mm
+# @router.get("/download-report")
+# def download_report(
+#     start_date: str = Query(..., description="Start date in YYYY-MM-DD"),
+#     end_date: str = Query(..., description="End date in YYYY-MM-DD"),
+#     format: str = Query("csv", enum=["csv", "pdf"]),
+#     db: Session = Depends(get_db),
+# ):
+#     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+#     end_dt = datetime.strptime(end_date, "%Y-%m-%d")
 
-    top_logo_path = os.path.join(os.getcwd(), "assets/Yamaha_Logo.png")
-    bottom_logo_path = os.path.join(os.getcwd(), "assets/raph.logo.png")
+#     sessions = (
+#         db.query(CompanySession)
+#         .filter(CompanySession.created_at >= start_dt)
+#         .filter(CompanySession.created_at < end_dt + timedelta(days=1))
+#         .order_by(CompanySession.created_at.asc())
+#         .all()
+#     )
 
-    doc = SimpleDocTemplate(
-        full_path, pagesize=A4, topMargin=35 * mm, bottomMargin=25 * mm, leftMargin=10 * mm, rightMargin=10 * mm
-    )
-    elements = []
-    styles = getSampleStyleSheet()
+#     data = [
+#         {
+#             "S. No.": index + 1,
+#             "Part Code": s.part.part_code if s.part else "N/A",
+#             "Part Name": s.part_name,
+#             "Category": s.part.category.category_name if s.part and s.part.category else "N/A",
+#             "Mode": s.part.mode_of_operation if s.part else "N/A",
+#             "Start Time": s.session_start.strftime("%Y-%m-%d %H:%M:%S") if s.session_start else "N/A",
+#             "End Time": s.session_end.strftime("%Y-%m-%d %H:%M:%S") if s.session_end else "N/A",
+#             "Total Count": s.part_count,
+#         }
+#         for index, s in enumerate(sessions)
+#     ]
 
-    def first_page_header_footer(canvas, doc):
-        canvas.saveState()
-        width, height = A4
-        canvas.setFont("Helvetica", 8)
-        canvas.drawString(10 * mm, height - 19 * mm, f"Start date: {start_date}")
-        canvas.drawString(10 * mm, height - 23 * mm, f"End Date: {end_date}")
-        canvas.setFont("Helvetica-Bold", 14)
-        canvas.drawCentredString(width / 2.0, height - 18 * mm, "PART REPORT")
-        canvas.setFont("Helvetica-Bold", 10)
-        canvas.drawCentredString(width / 2.0, height - 23 * mm, "Automatic Counting Machine")
-        if os.path.isfile(top_logo_path):
-            canvas.drawImage(
-                top_logo_path, width - 45 * mm, height - 90 * mm, width=35 * mm,
-                preserveAspectRatio=True, mask="auto",
-            )
-        canvas.setLineWidth(0.5)
-        canvas.line(10 * mm, height - 28 * mm, width - 10 * mm, height - 28 * mm)
-        draw_footer(canvas, width)
-        canvas.restoreState()
+#     df = pd.DataFrame(data)
+#     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    def later_pages_footer(canvas, doc):
-        canvas.saveState()
-        width, height = A4
-        draw_footer(canvas, width)
-        canvas.restoreState()
+#     if format == "csv":
+#         file_path = f"report_{timestamp}.csv"
+#         if df.empty:
+#             df = pd.DataFrame([{"Message": "No data available for the selected date range"}])
+#         df.to_csv(file_path, index=False)
+#         return FileResponse(file_path, media_type="text/csv", filename=os.path.basename(file_path))
 
-    def draw_footer(canvas, width):
-        canvas.setLineWidth(0.5)
-        canvas.line(10 * mm, 20 * mm, width - 10 * mm, 20 * mm)
-        canvas.setFont("Helvetica", 9)
-        canvas.drawString(10 * mm, 12 * mm, f"Page {canvas.getPageNumber()}")
-        canvas.drawRightString(width - 40 * mm, 12 * mm, "Powered by")
-        if os.path.isfile(bottom_logo_path):
-            canvas.drawImage(
-                bottom_logo_path, width - 38 * mm, -5 * mm, width=15 * mm,
-                preserveAspectRatio=True, mask="auto",
-            )
+#     # PDF generation kept as-is from the previous router — schema-independent.
+#     os.makedirs("reports", exist_ok=True)
+#     file_path = f"report_{timestamp}.pdf"
+#     full_path = os.path.join("reports", file_path)
 
-    if df.empty:
-        elements.append(Paragraph("<b>No data available</b>", styles["BodyText"]))
-    else:
-        table_data = [list(df.columns)] + df.values.tolist()
-        c_widths = [15 * mm, 30 * mm, 45 * mm, 30 * mm, 30 * mm, 30 * mm, 15 * mm]
-        table = Table(table_data, repeatRows=1, colWidths=c_widths, splitByRow=True)
-        table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("FONTSIZE", (0, 0), (-1, -1), 7),
-                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ]
-            )
-        )
-        elements.append(table)
+#     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+#     from reportlab.lib import colors
+#     from reportlab.lib.pagesizes import A4
+#     from reportlab.lib.styles import getSampleStyleSheet
+#     from reportlab.lib.units import mm
 
-    doc.build(elements, onFirstPage=first_page_header_footer, onLaterPages=later_pages_footer)
-    return FileResponse(full_path, media_type="application/pdf", filename=file_path)
+#     top_logo_path = os.path.join(os.getcwd(), "assets/Yamaha_Logo.png")
+#     bottom_logo_path = os.path.join(os.getcwd(), "assets/raph.logo.png")
+
+#     doc = SimpleDocTemplate(
+#         full_path, pagesize=A4, topMargin=35 * mm, bottomMargin=25 * mm, leftMargin=10 * mm, rightMargin=10 * mm
+#     )
+#     elements = []
+#     styles = getSampleStyleSheet()
+
+#     def first_page_header_footer(canvas, doc):
+#         canvas.saveState()
+#         width, height = A4
+#         canvas.setFont("Helvetica", 8)
+#         canvas.drawString(10 * mm, height - 19 * mm, f"Start date: {start_date}")
+#         canvas.drawString(10 * mm, height - 23 * mm, f"End Date: {end_date}")
+#         canvas.setFont("Helvetica-Bold", 14)
+#         canvas.drawCentredString(width / 2.0, height - 18 * mm, "PART REPORT")
+#         canvas.setFont("Helvetica-Bold", 10)
+#         canvas.drawCentredString(width / 2.0, height - 23 * mm, "Automatic Counting Machine")
+#         if os.path.isfile(top_logo_path):
+#             canvas.drawImage(
+#                 top_logo_path, width - 45 * mm, height - 90 * mm, width=35 * mm,
+#                 preserveAspectRatio=True, mask="auto",
+#             )
+#         canvas.setLineWidth(0.5)
+#         canvas.line(10 * mm, height - 28 * mm, width - 10 * mm, height - 28 * mm)
+#         draw_footer(canvas, width)
+#         canvas.restoreState()
+
+#     def later_pages_footer(canvas, doc):
+#         canvas.saveState()
+#         width, height = A4
+#         draw_footer(canvas, width)
+#         canvas.restoreState()
+
+#     def draw_footer(canvas, width):
+#         canvas.setLineWidth(0.5)
+#         canvas.line(10 * mm, 20 * mm, width - 10 * mm, 20 * mm)
+#         canvas.setFont("Helvetica", 9)
+#         canvas.drawString(10 * mm, 12 * mm, f"Page {canvas.getPageNumber()}")
+#         canvas.drawRightString(width - 40 * mm, 12 * mm, "Powered by")
+#         if os.path.isfile(bottom_logo_path):
+#             canvas.drawImage(
+#                 bottom_logo_path, width - 38 * mm, -5 * mm, width=15 * mm,
+#                 preserveAspectRatio=True, mask="auto",
+#             )
+
+#     if df.empty:
+#         elements.append(Paragraph("<b>No data available</b>", styles["BodyText"]))
+#     else:
+#         table_data = [list(df.columns)] + df.values.tolist()
+#         c_widths = [15 * mm, 30 * mm, 45 * mm, 30 * mm, 30 * mm, 30 * mm, 15 * mm]
+#         table = Table(table_data, repeatRows=1, colWidths=c_widths, splitByRow=True)
+#         table.setStyle(
+#             TableStyle(
+#                 [
+#                     ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+#                     ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+#                     ("FONTSIZE", (0, 0), (-1, -1), 7),
+#                     ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+#                     ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+#                 ]
+#             )
+#         )
+#         elements.append(table)
+
+#     doc.build(elements, onFirstPage=first_page_header_footer, onLaterPages=later_pages_footer)
+#     return FileResponse(full_path, media_type="application/pdf", filename=file_path)
+
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -1422,3 +1426,536 @@ def download_parts_data(db: Session = Depends(get_db)):
         filename=path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+# ---------------------------------------------------------------------------
+# Dashboard: stats / recent jobs / session detail / report download
+# ---------------------------------------------------------------------------
+IST = pytz.timezone("Asia/Kolkata")
+
+TIME_FILTERS = {"today", "month", "all", "range"}
+
+
+def _parse_date(value: str, field: str) -> datetime:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{field} must be YYYY-MM-DD")
+
+
+def _resolve_window(
+    time_filter: str,
+    start_date: Optional[str],
+    end_date: Optional[str],
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Half-open [start, end) window in IST. None means unbounded.
+
+    Filtering is on session_start (when the run actually began), not
+    created_at — they're written together, but session_start is the column
+    the operator thinks in.
+    """
+    if time_filter not in TIME_FILTERS:
+        raise HTTPException(status_code=400, detail=f"Invalid time_filter: {time_filter}")
+
+    now = datetime.now(IST)
+
+    if time_filter == "today":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0), None
+
+    if time_filter == "month":
+        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0), None
+
+    if time_filter == "range":
+        if not start_date or not end_date:
+            raise HTTPException(status_code=400, detail="start_date and end_date are required for range")
+        start_naive = _parse_date(start_date, "start_date")
+        end_naive = _parse_date(end_date, "end_date")
+        if start_naive > end_naive:
+            raise HTTPException(status_code=400, detail="start_date cannot be after end_date")
+        start = IST.localize(start_naive)
+        end = IST.localize(end_naive + timedelta(days=1))  # exclusive -> whole end day included
+        return start, end
+
+    return None, None  # "all"
+
+
+def _window_conds(column, start, end) -> list:
+    conds = []
+    if start is not None:
+        conds.append(column >= start)
+    if end is not None:
+        conds.append(column < end)
+    return conds
+
+
+def _to_ist(value: Optional[datetime]) -> Optional[datetime]:
+    if not value:
+        return None
+    # session_start/session_end are TIMESTAMPTZ; naive rows (legacy) are UTC.
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(IST)
+
+
+def _lifetime_counts(db: Session, part_codes: list[str]) -> dict[str, int]:
+    """part_code -> SUM(part_count) across every session ever recorded."""
+    codes = {c for c in part_codes if c}
+    if not codes:
+        return {}
+    rows = (
+        db.query(CompanySession.part_code, func.coalesce(func.sum(CompanySession.part_count), 0))
+        .filter(CompanySession.part_code.in_(codes))
+        .group_by(CompanySession.part_code)
+        .all()
+    )
+    return {code: int(total) for code, total in rows}
+
+
+def _units_inspected(db: Session, session_ids: list[int]) -> dict[int, int]:
+    """session_id -> number of part_defects rows (units passed under the camera)."""
+    if not session_ids:
+        return {}
+    rows = (
+        db.query(PartDefect.session_id, func.count(PartDefect.id))
+        .filter(PartDefect.session_id.in_(session_ids))
+        .group_by(PartDefect.session_id)
+        .all()
+    )
+    return {sid: int(n) for sid, n in rows}
+
+
+def _session_row(
+    s: CompanySession,
+    mode: Optional[str],
+    category: Optional[str],
+    lifetime_total: int,
+    units: int = 0,
+) -> dict:
+    start = _to_ist(s.session_start)
+    stop = _to_ist(s.session_end)
+    return {
+        "session_id": s.id,
+        "part_id": s.part_id,
+        "part_code": s.part_code,
+        "part_name": s.part_name,
+        "category": category or "N/A",
+        "mode": mode,                       # from parts.mode_of_operation
+        "order_no": s.order_no,
+        "total_count": s.part_count or 0,     
+        "lifetime_count": lifetime_total,  
+        "units_inspected": units,          
+        "parts_per_minute": s.parts_per_minute,
+        "session_weight": s.session_weight,
+        "status": s.overall_status,         # 'OK' | 'NOK' | None
+        "is_calibration": bool(s.is_calibration),
+        "calibration_passed": s.calibration_passed,
+        "calibration_avg_accuracy": s.calibration_avg_accuracy,
+        "start_time": start.isoformat() if start else None,
+        "stop_time": stop.isoformat() if stop else None,
+        "duration_seconds": int((stop - start).total_seconds()) if start and stop else None,
+        "notes": s.notes,
+    }
+
+@router.get("/stats")
+def get_dashboard_stats(
+    time_filter: str = Query("all", enum=["today", "month", "all", "range"]),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    start, end = _resolve_window(time_filter, start_date, end_date)
+    conds = _window_conds(CompanySession.session_start, start, end)
+
+    total_sessions = db.query(func.count(CompanySession.id)).filter(*conds).scalar() or 0
+
+    total_counted_parts = (
+        db.query(func.coalesce(func.sum(CompanySession.part_count), 0)).filter(*conds).scalar() or 0
+    )
+
+    # counted directly rather than derived from a production-session count —
+    # is_calibration is NOT NULL, but a subtraction hides any row that slips
+    # through with NULL and makes a bad number look like a plausible one.
+    calibration_sessions = (
+        db.query(func.count(CompanySession.id))
+        .filter(*conds, CompanySession.is_calibration.is_(True))
+        .scalar()
+        or 0
+    )
+
+    ok_sessions = (
+        db.query(func.count(CompanySession.id))
+        .filter(*conds, CompanySession.overall_status == "OK")
+        .scalar()
+        or 0
+    )
+    nok_sessions = (
+        db.query(func.count(CompanySession.id))
+        .filter(*conds, CompanySession.overall_status == "NOK")
+        .scalar()
+        or 0
+    )
+
+    part_conds = _window_conds(Part.created_at, start, end)
+    total_parts_configured = db.query(func.count(Part.part_id)).filter(*part_conds).scalar() or 0
+
+    avg_ppm = (
+        db.query(func.avg(CompanySession.parts_per_minute))
+        .filter(*conds, CompanySession.parts_per_minute.isnot(None))
+        .scalar()
+    )
+
+    by_mode = dict(
+        db.query(Part.mode_of_operation, func.count(CompanySession.id))
+        .select_from(CompanySession)
+        .join(Part, Part.part_id == CompanySession.part_id)
+        .filter(*conds)
+        .group_by(Part.mode_of_operation)
+        .all()
+    )
+
+    return {
+        "time_filter": time_filter,
+        "total_sessions": int(total_sessions),
+        "total_parts_configured": int(total_parts_configured),
+        "total_counted_parts": int(total_counted_parts),
+        "calibration_sessions": int(calibration_sessions),
+        "ok_sessions": int(ok_sessions),
+        "nok_sessions": int(nok_sessions),
+        "avg_parts_per_minute": round(float(avg_ppm), 2) if avg_ppm is not None else None,
+        "sessions_by_mode": {m: int(c) for m, c in by_mode.items() if m},
+    }
+
+
+@router.get("/recent-jobs")
+def get_recent_jobs(
+    time_filter: str = Query("all", enum=["today", "month", "all", "range"]),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=200),
+    part_code: Optional[str] = Query(None, description="case-insensitive substring"),
+    mode: Optional[str] = Query(None, description="Counting | Defect Detection | Measurement"),
+    status: Optional[str] = Query(None, description="OK | NOK"),
+    is_calibration: Optional[bool] = Query(None),
+    db: Session = Depends(get_db),
+):
+    start, end = _resolve_window(time_filter, start_date, end_date)
+    conds = _window_conds(CompanySession.session_start, start, end)
+
+    if part_code:
+        conds.append(
+            or_(
+                CompanySession.part_code.ilike(f"%{part_code}%"),
+                CompanySession.part_name.ilike(f"%{part_code}%"),
+            )
+        )
+    if status:
+        conds.append(CompanySession.overall_status == status)
+    if is_calibration is not None:
+        conds.append(CompanySession.is_calibration.is_(is_calibration))
+    if mode:
+        _validate_mode(mode)
+        conds.append(Part.mode_of_operation == mode)
+
+    def _joined(q):
+        # outer joins: part_id is ON DELETE SET NULL, so a session whose part
+        # was deleted still shows its denormalized code/name.
+        return (
+            q.select_from(CompanySession)
+            .outerjoin(Part, Part.part_id == CompanySession.part_id)
+            .outerjoin(Category, Category.category_id == Part.category_id)
+        )
+
+    total = _joined(db.query(func.count(CompanySession.id))).filter(*conds).scalar() or 0
+
+    rows = (
+        _joined(db.query(CompanySession, Part.mode_of_operation, Category.category_name))
+        .filter(*conds)
+        .order_by(nulls_last(CompanySession.session_start.desc()), CompanySession.id.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    lifetime = _lifetime_counts(db, [r[0].part_code for r in rows])
+    units = _units_inspected(db, [r[0].id for r in rows])
+
+    data = [
+        _session_row(s, m, c, lifetime.get(s.part_code, 0), units.get(s.id, 0))
+        for s, m, c in rows
+    ]
+
+    return {
+        "data": data,
+        "total": int(total),
+        "page": page,
+        "limit": limit,
+        "pages": max(1, -(-int(total) // limit)),
+    }
+
+
+@router.get("/session/{session_id}/report")
+def get_session_report(session_id: int, db: Session = Depends(get_db)):
+    """Everything recorded for one session — the row-expand / view-details
+    payload. Measurement rows come from measured_realtime_data, defect rows
+    are rolled up from part_defects against the part's defect_parameters."""
+    session = db.query(CompanySession).filter(CompanySession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    part = db.query(Part).filter(Part.part_id == session.part_id).first()
+    category = part.category.category_name if part and part.category else None
+    lifetime = _lifetime_counts(db, [session.part_code]).get(session.part_code, 0)
+
+    defect_rows = db.query(PartDefect).filter(PartDefect.session_id == session_id).all()
+
+    # {"d1": {"defect_name": "dent", "checked": 120, "nok": 7}}
+    config = (part.defect_parameters or {}) if part else {}
+    summary: dict[str, dict] = {
+        key: {
+            "defect_name": (cfg or {}).get("defect_name", key),
+            "confidence_threshold": (cfg or {}).get("confidence_threshold"),
+            "checked": 0,
+            "nok": 0,
+        }
+        for key, cfg in config.items()
+    }
+    for row in defect_rows:
+        for key, verdict in (row.defects or {}).items():
+            entry = summary.setdefault(
+                key, {"defect_name": key, "confidence_threshold": None, "checked": 0, "nok": 0}
+            )
+            entry["checked"] += 1
+            if str(verdict).upper() == "NOK":
+                entry["nok"] += 1
+
+    units_nok = sum(
+        1
+        for row in defect_rows
+        if any(str(v).upper() == "NOK" for v in (row.defects or {}).values())
+    )
+
+    return {
+        "session": _session_row(
+            session,
+            part.mode_of_operation if part else None,
+            category,
+            lifetime,
+            len(defect_rows),
+        ),
+        "part": _part_row(part, db) if part else None,
+        "measurement_parameters": part.measurement_parameters if part else None,
+        "measured_realtime_data": session.measured_realtime_data,
+        "defect_summary": summary,
+        "units_inspected": len(defect_rows),
+        "units_ok": len(defect_rows) - units_nok,
+        "units_nok": units_nok,
+        "calibration": {
+            "expected_per_run": session.calibration_expected_per_run,
+            "total_runs": session.calibration_total_runs,
+            "runs": session.calibration_runs,
+            "avg_count": session.calibration_avg_count,
+            "avg_accuracy": session.calibration_avg_accuracy,
+            "passed": session.calibration_passed,
+            "completed_at": _to_ist(session.calibration_completed_at).isoformat()
+            if session.calibration_completed_at
+            else None,
+        }
+        if session.is_calibration
+        else None,
+    }
+
+
+@router.delete("/session/{session_id}")
+def delete_session(session_id: int, db: Session = Depends(get_db)):
+    session = db.query(CompanySession).filter(CompanySession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.session_end is None:
+        raise HTTPException(status_code=400, detail="Stop the session before deleting it")
+    db.delete(session)   # part_defects cascade
+    db.commit()
+    return {"message": "Session deleted", "session_id": session_id}
+
+
+# ---- report export --------------------------------------------------------
+REPORT_COLUMNS = [
+    "S. No.",
+    "Part Code",
+    "Part Name",
+    "Category",
+    "Mode",
+    "Order No",
+    "Batch Count",
+    "Total Count",
+    "Units Inspected",
+    "Weight (g)",
+    "Status",
+    "Calibration",
+    "Start Time",
+    "End Time",
+]
+
+
+def _report_dataframe(db: Session, start: datetime, end: datetime, cap: int = 50_000):
+    rows = (
+        db.query(CompanySession, Part.mode_of_operation, Category.category_name)
+        .select_from(CompanySession)
+        .outerjoin(Part, Part.part_id == CompanySession.part_id)
+        .outerjoin(Category, Category.category_id == Part.category_id)
+        .filter(CompanySession.session_start >= start, CompanySession.session_start < end)
+        .order_by(CompanySession.session_start.asc(), CompanySession.id.asc())
+        .limit(cap)
+        .all()
+    )
+
+    lifetime = _lifetime_counts(db, [r[0].part_code for r in rows])
+    units = _units_inspected(db, [r[0].id for r in rows])
+
+    def fmt(value):
+        ts = _to_ist(value)
+        return ts.strftime("%Y-%m-%d %H:%M:%S") if ts else "N/A"
+
+    data = [
+        {
+            "S. No.": i,
+            "Part Code": s.part_code or "N/A",
+            "Part Name": s.part_name or "N/A",
+            "Category": c or "N/A",
+            "Mode": m or "N/A",
+            "Order No": s.order_no or "",
+            "Batch Count": s.part_count or 0,
+            "Total Count": lifetime.get(s.part_code, 0),
+            "Units Inspected": units.get(s.id, 0),
+            "Weight (g)": round(s.session_weight, 3) if s.session_weight else "",
+            "Status": s.overall_status or "",
+            "Calibration": "Yes" if s.is_calibration else "No",
+            "Start Time": fmt(s.session_start),
+            "End Time": fmt(s.session_end),
+        }
+        for i, (s, m, c) in enumerate(rows, start=1)
+    ]
+    return pd.DataFrame(data, columns=REPORT_COLUMNS)
+
+
+@router.get("/download-report")
+def download_report(
+    start_date: str = Query(..., description="YYYY-MM-DD"),
+    end_date: str = Query(..., description="YYYY-MM-DD"),
+    format: str = Query("csv", enum=["csv", "pdf", "xlsx"]),
+    db: Session = Depends(get_db),
+):
+    start, end = _resolve_window("range", start_date, end_date)
+    df = _report_dataframe(db, start, end)
+
+    stamp = datetime.now(IST).strftime("%Y%m%d_%H%M%S")
+    filename = f"part_report_{start_date}_to_{end_date}_{stamp}.{format}"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+
+    if format == "csv":
+        out = df if not df.empty else pd.DataFrame([{"Message": "No data for the selected range"}])
+        buf = io.StringIO()
+        out.to_csv(buf, index=False)
+        return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv", headers=headers)
+
+    if format == "xlsx":
+        out = df if not df.empty else pd.DataFrame([{"Message": "No data for the selected range"}])
+        buf = io.BytesIO()
+        out.to_excel(buf, index=False, engine="openpyxl")
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers,
+        )
+
+    return StreamingResponse(
+        io.BytesIO(_build_report_pdf(df, start_date, end_date)),
+        media_type="application/pdf",
+        headers=headers,
+    )
+
+
+def _build_report_pdf(df: "pd.DataFrame", start_date: str, end_date: str) -> bytes:
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+
+    top_logo = os.path.join(os.getcwd(), "assets/Yamaha_Logo.png")
+    bottom_logo = os.path.join(os.getcwd(), "assets/raph.logo.png")
+    page_w, page_h = landscape(A4)
+
+    def draw_footer(canvas):
+        canvas.setLineWidth(0.5)
+        canvas.line(10 * mm, 15 * mm, page_w - 10 * mm, 15 * mm)
+        canvas.setFont("Helvetica", 8)
+        canvas.drawString(10 * mm, 9 * mm, f"Page {canvas.getPageNumber()}")
+        canvas.drawRightString(page_w - 30 * mm, 9 * mm, "Powered by")
+        if os.path.isfile(bottom_logo):
+            canvas.drawImage(
+                bottom_logo, page_w - 28 * mm, 5 * mm, width=15 * mm,
+                preserveAspectRatio=True, mask="auto",
+            )
+
+    def first_page(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica-Bold", 14)
+        canvas.drawCentredString(page_w / 2.0, page_h - 15 * mm, "PART REPORT")
+        canvas.setFont("Helvetica-Bold", 9)
+        canvas.drawCentredString(page_w / 2.0, page_h - 20 * mm, "Automatic Inspection System")
+        canvas.setFont("Helvetica", 8)
+        canvas.drawString(10 * mm, page_h - 16 * mm, f"Start date: {start_date}")
+        canvas.drawString(10 * mm, page_h - 20 * mm, f"End date: {end_date}")
+        canvas.drawString(10 * mm, page_h - 24 * mm, f"Sessions: {len(df)}")
+        if os.path.isfile(top_logo):
+            canvas.drawImage(
+                top_logo, page_w - 45 * mm, page_h - 25 * mm, width=35 * mm,
+                preserveAspectRatio=True, mask="auto",
+            )
+        canvas.setLineWidth(0.5)
+        canvas.line(10 * mm, page_h - 27 * mm, page_w - 10 * mm, page_h - 27 * mm)
+        draw_footer(canvas)
+        canvas.restoreState()
+
+    def later_pages(canvas, doc):
+        canvas.saveState()
+        draw_footer(canvas)
+        canvas.restoreState()
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=landscape(A4),
+        topMargin=32 * mm,
+        bottomMargin=20 * mm,
+        leftMargin=8 * mm,
+        rightMargin=8 * mm,
+        title="Part Report",
+    )
+
+    styles = getSampleStyleSheet()
+    if df.empty:
+        elements = [Paragraph("<b>No data available for the selected date range</b>", styles["BodyText"])]
+    else:
+        table_data = [list(df.columns)] + df.astype(str).values.tolist()
+        table = Table(table_data, repeatRows=1, splitByRow=True)
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#b71c1c")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                    ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F5F6F8")]),
+                ]
+            )
+        )
+        elements = [table]
+
+    doc.build(elements, onFirstPage=first_page, onLaterPages=later_pages)
+    return buf.getvalue()

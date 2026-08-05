@@ -5,7 +5,7 @@ import {
 } from "@mui/material";
 import { Visibility, VisibilityOff, LockOutlined, PersonOutlined } from "@mui/icons-material";
 
-const BASE = import.meta.env.VITE_BASE_URL || "http://localhost:8000";
+const BASE = import.meta.env.VITE_BASE_URL;
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState("");

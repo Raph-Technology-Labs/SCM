@@ -1,178 +1,762 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { api } from "../api/client";
-import { useLiveSummary } from "../api/useLive";
+  Box,
+  Typography,
+  Paper,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Button,
+  TextField,
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Select,
+  FormControl,
+  InputLabel,
+  Stack,
+  Chip,
+  Snackbar,
+  Alert,
+  CircularProgress,
+} from "@mui/material";
+import DownloadIcon from "@mui/icons-material/Download";
+import VisibilityIcon from "@mui/icons-material/Visibility";
+import axios from "axios";
 
-const OK = "#1e9e6a";
-const NOK = "#d64545";
-const PENDING = "#8a93a2";
-const BLUE = "#2f6fed";
+const BASE_URL = import.meta.env.VITE_BASE_URL;
 
-function Kpi({ label, value, accent }) {
-  return (
-    <div className="kpi-card">
-      <div className="kpi-label">{label}</div>
-      <div className="kpi-value" style={accent ? { color: accent } : undefined}>{value}</div>
-    </div>
-  );
-}
+// "all" is a real value, not "" — MUI Select treats an empty string as
+// "nothing selected" and leaves the closed field blank.
+const MODE_ALL = "all";
+const MODES = ["Counting", "Defect Detection", "Measurement"];
+
+const HEADERS = [
+  "Sr.No",
+  "Part Code",
+  "Part Name",
+  "Category",
+  "Mode",
+  "Total Count",
+  "Status",
+  "Start Date",
+  "Start Time",
+  "Stop Date",
+  "Stop Time",
+];
+
+// shared date-field styling — theme already paints the focus border red
+const dateFieldSx = {
+  "& .MuiOutlinedInput-root": { bgcolor: "background.paper", height: 48 },
+};
+
+const scrollbarSx = {
+  "&::-webkit-scrollbar": { width: 12, height: 12 },
+  "&::-webkit-scrollbar-track": { bgcolor: "background.default", borderRadius: 1 },
+  "&::-webkit-scrollbar-thumb": {
+    bgcolor: "text.secondary",
+    borderRadius: 1,
+    border: "3px solid transparent",
+    backgroundClip: "content-box",
+  },
+};
 
 export default function Dashboard() {
-  const { summary, live } = useLiveSummary();
-  const [series, setSeries] = useState([]);
-  const [status, setStatus] = useState([]);
-  const [defects, setDefects] = useState([]);
-  const [top, setTop] = useState([]);
-  const [error, setError] = useState("");
+  const [stats, setStats] = useState({});
+  const [jobs, setJobs] = useState([]);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const [ts, st, df, tp] = await Promise.all([
-          api.timeseries(),
-          api.statusBreakdown(),
-          api.defectBreakdown(),
-          api.topParts(),
-        ]);
-        setSeries(ts);
-        setStatus(st);
-        setDefects(df);
-        setTop(tp);
-      } catch (err) {
-        setError(err.message);
-      }
-    })();
+  // filters
+  const [filter, setFilter] = useState("all"); // today | month | all | range
+  const [filterModalOpen, setFilterModalOpen] = useState(false);
+  const [filterStart, setFilterStart] = useState("");
+  const [filterEnd, setFilterEnd] = useState("");
+  const [modeFilter, setModeFilter] = useState(MODE_ALL);
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  // download modal
+  const [downloadModalOpen, setDownloadModalOpen] = useState(false);
+  const [downloadStart, setDownloadStart] = useState("");
+  const [downloadEnd, setDownloadEnd] = useState("");
+  const [downloadFormat, setDownloadFormat] = useState("csv");
+
+  // pagination
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [total, setTotal] = useState(0);
+
+  // ui
+  const [isLoading, setIsLoading] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [toastOpen, setToastOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState("");
+  const [toastSeverity, setToastSeverity] = useState("error");
+
+  const notify = useCallback((message, severity = "error") => {
+    setToastMessage(message);
+    setToastSeverity(severity);
+    setToastOpen(true);
   }, []);
 
-  // prefer live status breakdown when the socket is pushing it
-  const statusData = summary?.status_breakdown || status;
-  const statusColors = { OK, NOK, Pending: PENDING };
+  // debounce the part-code search box
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // A custom range only becomes active once both dates are set, so everything
+  // runs off one effect instead of two competing ones.
+  const rangeReady = filter !== "range" || (filterStart && filterEnd);
+
+  const buildParams = useCallback(
+    (extra = {}) => {
+      const params = new URLSearchParams();
+      params.append("time_filter", filter);
+      if (filter === "range") {
+        params.append("start_date", filterStart);
+        params.append("end_date", filterEnd);
+      }
+      Object.entries(extra).forEach(([k, v]) => {
+        if (v !== "" && v !== null && v !== undefined) params.append(k, v);
+      });
+      return params;
+    },
+    [filter, filterStart, filterEnd],
+  );
+
+  const latestRequest = useRef(0);
+
+  useEffect(() => {
+    if (!rangeReady) {
+      setJobs([]);
+      setTotal(0);
+      setStats({});
+      return;
+    }
+
+    const requestId = ++latestRequest.current;
+    let cancelled = false;
+
+    const load = async () => {
+      setIsLoading(true);
+      try {
+        const [statsRes, jobsRes] = await Promise.all([
+          axios.get(`${BASE_URL}/dashboard/stats?${buildParams().toString()}`),
+          axios.get(
+            `${BASE_URL}/dashboard/recent-jobs?${buildParams({
+              page,
+              limit,
+              part_code: debouncedSearch,
+              // sentinel never reaches the API — buildParams drops "" values
+              mode: modeFilter === MODE_ALL ? "" : modeFilter,
+            }).toString()}`,
+          ),
+        ]);
+
+        if (cancelled || requestId !== latestRequest.current) return;
+
+        setStats(statsRes.data || {});
+        const payload = jobsRes.data || {};
+        setJobs(payload.data || []);
+        setTotal(payload.total || 0);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Dashboard load failed:", err);
+        setJobs([]);
+        setTotal(0);
+        notify("Could not load dashboard data. Check the API connection.");
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    filter,
+    filterStart,
+    filterEnd,
+    page,
+    limit,
+    debouncedSearch,
+    modeFilter,
+    rangeReady,
+    buildParams,
+    notify,
+  ]);
+
+  // ===== format helpers =====
+  const formatDate = (value) =>
+    value ? new Date(value).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" }) : "N/A";
+
+  const formatTime = (value) =>
+    value
+      ? new Date(value).toLocaleTimeString("en-IN", {
+          timeZone: "Asia/Kolkata",
+          hour12: true,
+        })
+      : "N/A";
+
+  const isFutureDate = (dateStr) => {
+    const today = new Date().setHours(0, 0, 0, 0);
+    return new Date(dateStr).setHours(0, 0, 0, 0) > today;
+  };
+
+  const validateRange = (start, end) => {
+    if (!start || !end) {
+      notify("Select both a start and an end date.", "warning");
+      return false;
+    }
+    if (isFutureDate(start) || isFutureDate(end)) {
+      notify("Future dates are not allowed.", "warning");
+      return false;
+    }
+    if (new Date(start) > new Date(end)) {
+      notify("Start date cannot be after end date.", "warning");
+      return false;
+    }
+    return true;
+  };
+
+  // ===== download =====
+  const closeDownloadModal = () => {
+    setDownloadModalOpen(false);
+    setDownloadStart("");
+    setDownloadEnd("");
+    setDownloadFormat("csv");
+  };
+
+  const handleDownload = async () => {
+    if (!validateRange(downloadStart, downloadEnd)) return;
+
+    setIsDownloading(true);
+    try {
+      const response = await fetch(
+        `${BASE_URL}/dashboard/download-report?start_date=${downloadStart}&end_date=${downloadEnd}&format=${downloadFormat}`,
+      );
+      if (!response.ok) throw new Error(await response.text());
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const timestamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+      a.href = url;
+      a.download = `part_report_${downloadStart}_to_${downloadEnd}_${timestamp}.${downloadFormat}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      notify("Report downloaded.", "success");
+      closeDownloadModal();
+    } catch (error) {
+      console.error("Download failed:", error);
+      notify("Report download failed. Try a smaller date range.");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  // ===== filters =====
+  const applyRangeFilter = () => {
+    if (!validateRange(filterStart, filterEnd)) return;
+    setFilter("range");
+    setPage(1);
+    setFilterModalOpen(false);
+  };
+
+  const handleFilterChange = (value) => {
+    setFilter(value);
+    setPage(1);
+    if (value !== "range") {
+      setFilterStart("");
+      setFilterEnd("");
+    } else {
+      setFilterModalOpen(true);
+    }
+  };
+
+  // ===== pagination =====
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  const handlePrev = () => page > 1 && setPage((p) => p - 1);
+  const handleNext = () => page < totalPages && setPage((p) => p + 1);
+
+  const cards = [
+    { label: "No. of Sessions", value: stats.total_sessions || 0 },
+    { label: "Total Parts Configured", value: stats.total_parts_configured || 0 },
+    { label: "Total Parts Counted", value: stats.total_counted_parts || 0 },
+    { label: "Total Batches", value: stats.total_batches || 0 },
+  ];
+
+  const renderStatus = (job) => {
+    if (job.is_calibration) {
+      const passed = job.calibration_passed;
+      return (
+        <Chip
+          size="small"
+          variant="outlined"
+          color={passed === false ? "warning" : "info"}
+          label={
+            passed === null || passed === undefined
+              ? "Calibration"
+              : passed
+                ? "Cal · Pass"
+                : "Cal · Fail"
+          }
+        />
+      );
+    }
+    if (!job.status) return <Chip size="small" variant="outlined" label="—" />;
+    return (
+      <Chip
+        size="small"
+        label={job.status}
+        color={job.status === "OK" ? "success" : "error"}
+      />
+    );
+  };
 
   return (
-    <div>
-      <div className="page-head">
-        <div>
-          <h1 className="page-title">Dashboard</h1>
-          <p className="page-sub">Inspection overview and live production metrics.</p>
-        </div>
-        <span className={"live-badge " + (live ? "on" : "off")}>
-          <span className="live-dot" /> {live ? "Live" : "Polling"}
-        </span>
-      </div>
+    <Box sx={{ p: 3 }}>
+      {/* ===== Summary ===== */}
+      <Box sx={{ mb: 5 }}>
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            mb: 1.5,
+          }}
+        >
+          <Box>
+            <Typography variant="h5" sx={{ fontWeight: 700, color: "text.primary" }}>
+              Dashboard
+            </Typography>
+            <Typography variant="body2" sx={{ color: "text.secondary" }}>
+              Summary
+            </Typography>
+          </Box>
 
-      {error && <div className="msg msg-error">{error}</div>}
+          <Stack direction="row" spacing={1} alignItems="center">
+            <TextField
+              select
+              size="small"
+              value={filter}
+              onChange={(e) => handleFilterChange(e.target.value)}
+              sx={{
+                width: 150,
+                bgcolor: "background.paper",
+                borderRadius: 1,
+                boxShadow: 1,
+                "& .MuiOutlinedInput-root fieldset": { border: "none" },
+              }}
+            >
+              <MenuItem value="today">Today</MenuItem>
+              <MenuItem value="month">This Month</MenuItem>
+              <MenuItem value="all">All Time</MenuItem>
+              <MenuItem value="range">Custom Range</MenuItem>
+            </TextField>
 
-      <div className="kpi-grid">
-        <Kpi label="Parts" value={summary?.parts_total ?? "—"} />
-        <Kpi label="AI models" value={summary?.models_total ?? "—"} />
-        <Kpi label="Sessions" value={summary?.sessions_total ?? "—"} />
-        <Kpi label="Total inspected" value={summary ? summary.total_inspected.toLocaleString() : "—"} />
-        <Kpi label="OK rate" value={summary ? `${summary.ok_rate}%` : "—"} accent={OK} />
-        <Kpi
-          label="Avg parts / min"
-          value={summary?.avg_parts_per_minute ?? "—"}
-          accent={BLUE}
-        />
-      </div>
+            <Button
+              variant="contained"
+              color="secondary"
+              startIcon={<VisibilityIcon />}
+              onClick={() => setFilterModalOpen(true)}
+              sx={{ minWidth: 120, height: 40 }}
+            >
+              Filter
+            </Button>
 
-      <div className="chart-grid">
-        <div className="chart-card wide">
-          <h3>Units inspected per day</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <AreaChart data={series} margin={{ left: -12, right: 8, top: 6 }}>
-              <defs>
-                <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={BLUE} stopOpacity={0.35} />
-                  <stop offset="100%" stopColor={BLUE} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" />
-              <XAxis dataKey="day" tick={{ fontSize: 11, fill: "#6a7382" }} />
-              <YAxis tick={{ fontSize: 11, fill: "#6a7382" }} />
-              <Tooltip />
-              <Area type="monotone" dataKey="inspected" stroke={BLUE} fill="url(#g)" strokeWidth={2} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<DownloadIcon />}
+              onClick={() => setDownloadModalOpen(true)}
+              sx={{ minWidth: 120, height: 40 }}
+            >
+              Download
+            </Button>
+          </Stack>
+        </Box>
 
-        <div className="chart-card">
-          <h3>Inspection status</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <PieChart>
-              <Pie
-                data={statusData}
-                dataKey="count"
-                nameKey="status"
-                innerRadius={58}
-                outerRadius={92}
-                paddingAngle={2}
+        <Box sx={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 2 }}>
+          {cards.map((card) => (
+            <Paper
+              key={card.label}
+              elevation={1}
+              sx={{
+                p: 2,
+                textAlign: "center",
+                borderTop: "3px solid transparent",
+                transition: "all .18s ease",
+                "&:hover": {
+                  bgcolor: "peach.main",
+                  borderTopColor: "primary.main",
+                  boxShadow: 3,
+                },
+              }}
+            >
+              <Typography variant="subtitle2" sx={{ color: "text.secondary" }}>
+                {card.label}
+              </Typography>
+              <Typography variant="h5" sx={{ fontWeight: 700, color: "text.primary" }}>
+                {card.value}
+              </Typography>
+            </Paper>
+          ))}
+        </Box>
+
+        {/* quality strip — reads straight off company_sessions.overall_status */}
+        <Stack direction="row" spacing={1} sx={{ mt: 2 }} alignItems="center" flexWrap="wrap">
+          <Chip size="small" color="success" label={`OK ${stats.ok_sessions || 0}`} />
+          <Chip size="small" color="error" label={`NOK ${stats.nok_sessions || 0}`} />
+          <Chip
+            size="small"
+            variant="outlined"
+            label={`Calibration runs ${stats.calibration_sessions || 0}`}
+          />
+          {stats.avg_parts_per_minute ? (
+            <Chip
+              size="small"
+              variant="outlined"
+              label={`Avg ${stats.avg_parts_per_minute} parts/min`}
+            />
+          ) : null}
+        </Stack>
+      </Box>
+
+      {/* ===== Sessions ===== */}
+      <Box>
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            mb: 2,
+            gap: 2,
+            flexWrap: "wrap",
+          }}
+        >
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Typography variant="h6" sx={{ fontWeight: 600, color: "text.primary" }}>
+              Sessions
+            </Typography>
+            <TextField
+              size="small"
+              placeholder="Search part code"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              sx={{ width: 200, bgcolor: "background.paper" }}
+            />
+            <TextField
+              select
+              size="small"
+              value={modeFilter}
+              onChange={(e) => {
+                setModeFilter(e.target.value);
+                setPage(1);
+              }}
+              SelectProps={{
+                displayEmpty: true,
+                // draw the closed field's text from the value directly, so it
+                // never blanks out regardless of what MUI matches internally
+                renderValue: (v) => (!v || v === MODE_ALL ? "All modes" : v),
+              }}
+              sx={{ width: 180, bgcolor: "background.paper" }}
+            >
+              <MenuItem value={MODE_ALL}>All modes</MenuItem>
+              {MODES.map((m) => (
+                <MenuItem key={m} value={m}>
+                  {m}
+                </MenuItem>
+              ))}
+            </TextField>
+          </Stack>
+
+          <Stack direction="row" spacing={2} alignItems="center">
+            <Typography variant="body2" sx={{ color: "text.secondary" }}>
+              {`Total: ${total}`}
+            </Typography>
+
+            <FormControl size="small" sx={{ minWidth: 88, bgcolor: "background.paper" }}>
+              <InputLabel id="page-size-label">Rows</InputLabel>
+              <Select
+                labelId="page-size-label"
+                value={limit}
+                label="Rows"
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setPage(1);
+                }}
               >
-                {statusData.map((d) => (
-                  <Cell key={d.status} fill={statusColors[d.status] || PENDING} />
-                ))}
-              </Pie>
-              <Tooltip />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="legend">
-            {statusData.map((d) => (
-              <span key={d.status} className="legend-item">
-                <span className="legend-dot" style={{ background: statusColors[d.status] || PENDING }} />
-                {d.status} · {d.count}
-              </span>
-            ))}
-          </div>
-        </div>
+                <MenuItem value={10}>10</MenuItem>
+                <MenuItem value={20}>20</MenuItem>
+                <MenuItem value={50}>50</MenuItem>
+              </Select>
+            </FormControl>
 
-        <div className="chart-card">
-          <h3>Defects by type</h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={defects} margin={{ left: -12, right: 8, top: 6 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eef0f3" />
-              <XAxis dataKey="defect" tick={{ fontSize: 10, fill: "#6a7382" }} interval={0} />
-              <YAxis tick={{ fontSize: 11, fill: "#6a7382" }} allowDecimals={false} />
-              <Tooltip />
-              <Bar dataKey="count" fill={NOK} radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+            <Button
+              variant="outlined"
+              color="primary"
+              onClick={handlePrev}
+              disabled={page <= 1}
+              sx={{ minWidth: 80, height: 40 }}
+            >
+              Prev
+            </Button>
+            <Typography variant="body2" sx={{ color: "text.secondary" }}>
+              {`Page ${page} / ${totalPages}`}
+            </Typography>
+            <Button
+              variant="outlined"
+              color="primary"
+              onClick={handleNext}
+              disabled={page >= totalPages}
+              sx={{ minWidth: 80, height: 40 }}
+            >
+              Next
+            </Button>
+          </Stack>
+        </Box>
 
-        <div className="chart-card wide">
-          <h3>Top parts by units inspected</h3>
-          {top.length === 0 ? (
-            <div className="empty">No session data yet.</div>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr><th>Code</th><th>Name</th><th>Sessions</th><th>Inspected</th></tr>
-              </thead>
-              <tbody>
-                {top.map((p) => (
-                  <tr key={p.part_code}>
-                    <td className="mono">{p.part_code}</td>
-                    <td>{p.part_name}</td>
-                    <td className="mono">{p.sessions}</td>
-                    <td className="mono">{p.inspected.toLocaleString()}</td>
-                  </tr>
+        <TableContainer
+          component={Paper}
+          elevation={2}
+          sx={{ height: "calc(100vh - 380px)", overflowY: "auto", ...scrollbarSx }}
+        >
+          <Table stickyHeader size="small">
+            <TableHead>
+              <TableRow>
+                {HEADERS.map((header) => (
+                  <TableCell
+                    key={header}
+                    sx={{
+                      fontWeight: 700,
+                      color: "text.primary",
+                      bgcolor: "background.default",
+                      py: 1.5,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {header}
+                  </TableCell>
                 ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-    </div>
+              </TableRow>
+            </TableHead>
+
+            <TableBody>
+              {isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={HEADERS.length} align="center" sx={{ py: 6 }}>
+                    <CircularProgress size={28} color="primary" />
+                  </TableCell>
+                </TableRow>
+              ) : jobs.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={HEADERS.length}
+                    align="center"
+                    sx={{ py: 6, color: "text.secondary" }}
+                  >
+                    {filter === "range" && !rangeReady
+                      ? "Pick a start and end date to see sessions."
+                      : "No sessions in this range."}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                jobs.map((job, idx) => (
+                  <TableRow
+                    key={job.session_id || idx}
+                    hover
+                    sx={{ "&:hover": { bgcolor: "accent.light" } }}
+                  >
+                    <TableCell>{(page - 1) * limit + idx + 1}</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>{job.part_code || "N/A"}</TableCell>
+                    <TableCell>{job.part_name || "N/A"}</TableCell>
+                    <TableCell>{job.category || "N/A"}</TableCell>
+                    <TableCell>{job.mode || "N/A"}</TableCell>
+                    {/* <TableCell>{job.batch_count ?? 0}</TableCell> */}
+                    <TableCell>{job.total_count ?? 0}</TableCell>
+                    <TableCell>{renderStatus(job)}</TableCell>
+                    <TableCell>{formatDate(job.start_time)}</TableCell>
+                    <TableCell>{formatTime(job.start_time)}</TableCell>
+                    <TableCell>{formatDate(job.stop_time)}</TableCell>
+                    <TableCell>{formatTime(job.stop_time)}</TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Box>
+
+      {/* ===== Filter modal ===== */}
+      <Dialog
+        open={filterModalOpen}
+        onClose={() => setFilterModalOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 2, width: 480 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700 }}>Filter Sessions</DialogTitle>
+
+        <DialogContent
+          sx={{
+            bgcolor: "background.default",
+            mt: 1,
+            p: 3,
+            display: "flex",
+            flexDirection: "column",
+            gap: 3,
+          }}
+        >
+          {[
+            { label: "From", value: filterStart, set: setFilterStart },
+            { label: "To", value: filterEnd, set: setFilterEnd },
+          ].map((field) => (
+            <Box key={field.label}>
+              <Typography
+                sx={{ fontSize: "0.875rem", fontWeight: 600, color: "text.primary", mb: 0.5 }}
+              >
+                {field.label}
+              </Typography>
+              <TextField
+                type="date"
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+                value={field.value}
+                onChange={(e) => field.set(e.target.value)}
+                sx={dateFieldSx}
+              />
+            </Box>
+          ))}
+        </DialogContent>
+
+        <DialogActions sx={{ p: 3, pt: 2, gap: 2 }}>
+          <Button
+            variant="outlined"
+            color="secondary"
+            onClick={() => setFilterModalOpen(false)}
+            sx={{ flex: 1 }}
+          >
+            Cancel
+          </Button>
+          <Button variant="contained" color="primary" onClick={applyRangeFilter} sx={{ flex: 1 }}>
+            Apply Filter
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ===== Download modal ===== */}
+      <Dialog
+        open={downloadModalOpen}
+        onClose={closeDownloadModal}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 2, width: 480 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700 }}>
+          Download Report
+          <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5, fontWeight: 400 }}>
+            Select a date range and a format
+          </Typography>
+        </DialogTitle>
+
+        <DialogContent
+          sx={{
+            bgcolor: "background.default",
+            mt: 1,
+            p: 3,
+            display: "flex",
+            flexDirection: "column",
+            gap: 3,
+          }}
+        >
+          {[
+            { label: "From", value: downloadStart, set: setDownloadStart },
+            { label: "To", value: downloadEnd, set: setDownloadEnd },
+          ].map((field) => (
+            <Box key={field.label}>
+              <Typography
+                sx={{ fontSize: "0.875rem", fontWeight: 600, color: "text.primary", mb: 0.5 }}
+              >
+                {field.label}
+              </Typography>
+              <TextField
+                type="date"
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+                value={field.value}
+                onChange={(e) => field.set(e.target.value)}
+                sx={dateFieldSx}
+              />
+            </Box>
+          ))}
+
+          <Box>
+            <Typography
+              sx={{ fontSize: "0.875rem", fontWeight: 600, color: "text.primary", mb: 0.5 }}
+            >
+              Choose Format
+            </Typography>
+            <TextField
+              select
+              fullWidth
+              value={downloadFormat}
+              onChange={(e) => setDownloadFormat(e.target.value)}
+              sx={dateFieldSx}
+            >
+              <MenuItem value="pdf">PDF</MenuItem>
+              <MenuItem value="csv">CSV</MenuItem>
+            </TextField>
+          </Box>
+        </DialogContent>
+
+        <DialogActions sx={{ p: 3, pt: 2, gap: 2 }}>
+          <Button
+            variant="outlined"
+            color="secondary"
+            onClick={closeDownloadModal}
+            sx={{ flex: 1 }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleDownload}
+            disabled={isDownloading}
+            sx={{ flex: 1 }}
+          >
+            {isDownloading ? "Downloading…" : "Download"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Snackbar
+        open={toastOpen}
+        autoHideDuration={3000}
+        onClose={() => setToastOpen(false)}
+        anchorOrigin={{ vertical: "top", horizontal: "center" }}
+      >
+        <Alert
+          severity={toastSeverity}
+          sx={{ width: "100%" }}
+          onClose={() => setToastOpen(false)}
+        >
+          {toastMessage}
+        </Alert>
+      </Snackbar>
+    </Box>
   );
 }

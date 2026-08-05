@@ -346,7 +346,6 @@ const MeasurementPage = () => {
               />
             )}
 
-
             {!(status === "RUNNING" && previewFrame) && (
               <Box sx={{ position: "relative", textAlign: "center", zIndex: 1 }}>
                 <VideocamIcon

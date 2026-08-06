@@ -295,7 +295,7 @@ export default function Dashboard() {
     { label: "No. of Sessions", value: stats.total_sessions || 0 },
     { label: "Total Parts Configured", value: stats.total_parts_configured || 0 },
     { label: "Total Parts Counted", value: stats.total_counted_parts || 0 },
-    { label: "Total Batches", value: stats.total_batches || 0 },
+    // { label: "Total Batches", value: stats.total_batches || 0 },
   ];
 
   const renderStatus = (job) => {
@@ -389,7 +389,7 @@ export default function Dashboard() {
           </Stack>
         </Box>
 
-        <Box sx={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 2 }}>
+        <Box sx={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 2 }}>
           {cards.map((card) => (
             <Paper
               key={card.label}
@@ -418,13 +418,13 @@ export default function Dashboard() {
 
         {/* quality strip — reads straight off company_sessions.overall_status */}
         <Stack direction="row" spacing={1} sx={{ mt: 2 }} alignItems="center" flexWrap="wrap">
-          <Chip size="small" color="success" label={`OK ${stats.ok_sessions || 0}`} />
+          {/* <Chip size="small" color="success" label={`OK ${stats.ok_sessions || 0}`} />
           <Chip size="small" color="error" label={`NOK ${stats.nok_sessions || 0}`} />
           <Chip
             size="small"
             variant="outlined"
             label={`Calibration runs ${stats.calibration_sessions || 0}`}
-          />
+          /> */}
           {stats.avg_parts_per_minute ? (
             <Chip
               size="small"

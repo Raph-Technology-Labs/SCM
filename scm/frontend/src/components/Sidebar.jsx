@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Box, Button, Typography, Divider, IconButton, List, Tooltip, Dialog, DialogTitle, DialogActions,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import { useLocation } from "react-router-dom";
 import logo from "../assets/raph.logo.png";
 
@@ -18,7 +19,22 @@ import AddCircleOutlinedIcon from "@mui/icons-material/AddCircleOutlined";
 const EXPANDED = 260;
 const COLLAPSED = 74;
 
+/**
+ * Sidebar surface: one faint step below theme background.default (#F5F6F8),
+ * staying in the same cool-grey family so the rail reads as a recessed panel
+ * rather than a different material. Everything else comes from theme tokens.
+ * Want it fainter? Move `bg` to #F0F2F5. Deeper? #E6E9EF.
+ */
+const SURFACE = {
+  bg: "#ECEFF3",
+  border: "#DDE1E8",
+  hover: "#E2E6EC",
+  disabledBg: "#E0E4EA",
+  disabledText: "#A3ABB8",
+};
+
 const Sidebar = ({ loginData, onNavigate }) => {
+  const theme = useTheme();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
 
@@ -57,10 +73,10 @@ const Sidebar = ({ loginData, onNavigate }) => {
           mb: 1,
           fontWeight: active ? 600 : 500,
           fontSize: "15px",
-          color: active ? "#D92D20" : "#1A1A1A",
-          bgcolor: active ? "#FEE2E2" : "transparent",
-          borderRadius: "5px",
-          "&:hover": { bgcolor: active ? "#FEE2E2" : "#F3F4F6" },
+          color: active ? "primary.main" : "text.primary",
+          bgcolor: active ? "peach.main" : "transparent",
+          borderRadius: 1,
+          "&:hover": { bgcolor: active ? "peach.main" : SURFACE.hover },
         }}
       >
         {collapsed ? icon : name}
@@ -74,13 +90,13 @@ const Sidebar = ({ loginData, onNavigate }) => {
       sx={{
         width: collapsed ? COLLAPSED : EXPANDED,
         transition: "width 0.2s ease",
-        bgcolor: "#FFFFFF",
-        color: "#1A1A1A",
+        bgcolor: SURFACE.bg,
+        color: "text.primary",
         display: "flex",
         flexDirection: "column",
         justifyContent: "space-between",
         height: "100vh",
-        borderRight: "1px solid #E5E7EB",
+        borderRight: `1px solid ${SURFACE.border}`,
         overflowX: "hidden",
         overflowY: "auto",
         userSelect: "none",
@@ -97,8 +113,9 @@ const Sidebar = ({ loginData, onNavigate }) => {
             justifyContent: collapsed ? "center" : "flex-start",
             textTransform: "none",
             minWidth: 0,
-            color: "#1A1A1A",
+            color: "text.secondary",
             mb: 1,
+            "&:hover": { bgcolor: SURFACE.hover, color: "text.primary" },
             "& .MuiButton-startIcon": { m: collapsed ? 0 : undefined },
           }}
         >
@@ -120,12 +137,16 @@ const Sidebar = ({ loginData, onNavigate }) => {
           />
         </Box>
 
-        {/* + New Session (black) */}
+        {/* + New Session (theme secondary / black) */}
         {collapsed ? (
           <Tooltip title="New Session" placement="right">
             <IconButton
               onClick={() => onNavigate("/mode-selection")}
-              sx={{ width: "100%", borderRadius: "5px", bgcolor: "#111111", color: "#fff", mb: 1, "&:hover": { bgcolor: "#333" } }}
+              sx={{
+                width: "100%", borderRadius: 1, mb: 1,
+                bgcolor: "secondary.main", color: "#fff",
+                "&:hover": { bgcolor: "#333" },
+              }}
             >
               <PlayCircleOutlinedIcon />
             </IconButton>
@@ -135,15 +156,17 @@ const Sidebar = ({ loginData, onNavigate }) => {
             fullWidth
             onClick={() => onNavigate("/mode-selection")}
             sx={{
-              bgcolor: "#111111", color: "#fff", borderRadius: "5px", py: 1, mb: 1,
-              textTransform: "none", fontWeight: 500, "&:hover": { bgcolor: "#333" },
+              bgcolor: "secondary.main", color: "#fff",
+              borderRadius: 1, py: 1, mb: 1,
+              textTransform: "none", fontWeight: 600,
+              "&:hover": { bgcolor: "#333" },
             }}
           >
             + New Session
           </Button>
         )}
 
-        {/* + Add Item (red for admin, grey/disabled for operator) */}
+        {/* + Add Item (theme primary red for admin, muted for operator) */}
         {collapsed ? (
           <Tooltip title="Add Item" placement="right">
             <span>
@@ -151,11 +174,11 @@ const Sidebar = ({ loginData, onNavigate }) => {
                 disabled={!isAdmin}
                 onClick={() => onNavigate("/add-part")}
                 sx={{
-                  width: "100%", borderRadius: "5px", mb: 2,
-                  bgcolor: isAdmin ? "primary.main" : "#F3F4F6",
-                  color: isAdmin ? "#fff" : "#9AA1AC",
-                  "&:hover": { bgcolor: isAdmin ? "primary.dark" : "#F3F4F6" },
-                  "&.Mui-disabled": { bgcolor: "#F3F4F6", color: "#9AA1AC" },
+                  width: "100%", borderRadius: 1, mb: 2,
+                  bgcolor: isAdmin ? "primary.main" : SURFACE.disabledBg,
+                  color: isAdmin ? "#fff" : SURFACE.disabledText,
+                  "&:hover": { bgcolor: isAdmin ? "primary.dark" : SURFACE.disabledBg },
+                  "&.Mui-disabled": { bgcolor: SURFACE.disabledBg, color: SURFACE.disabledText },
                 }}
               >
                 <AddCircleOutlinedIcon />
@@ -168,18 +191,18 @@ const Sidebar = ({ loginData, onNavigate }) => {
             disabled={!isAdmin}
             onClick={() => onNavigate("/add-part")}
             sx={{
-              bgcolor: isAdmin ? "primary.main" : "#F3F4F6",
-              color: isAdmin ? "#fff" : "#9AA1AC",
-              borderRadius: "5px", py: 1, mb: 3, textTransform: "none", fontWeight: 500,
-              "&:hover": { bgcolor: isAdmin ? "primary.dark" : "#F3F4F6" },
-              "&.Mui-disabled": { bgcolor: "#F3F4F6", color: "#9AA1AC" },
+              bgcolor: isAdmin ? "primary.main" : SURFACE.disabledBg,
+              color: isAdmin ? "#fff" : SURFACE.disabledText,
+              borderRadius: 1, py: 1, mb: 3, textTransform: "none", fontWeight: 600,
+              "&:hover": { bgcolor: isAdmin ? "primary.dark" : SURFACE.disabledBg },
+              "&.Mui-disabled": { bgcolor: SURFACE.disabledBg, color: SURFACE.disabledText },
             }}
           >
             + Add Item
           </Button>
         )}
 
-        <Divider sx={{ mb: 2 }} />
+        <Divider sx={{ mb: 2, borderColor: SURFACE.border }} />
 
         {/* Main Navigation */}
         <List disablePadding>
@@ -190,34 +213,40 @@ const Sidebar = ({ loginData, onNavigate }) => {
       </Box>
 
       {/* BOTTOM SECTION */}
-      <Box sx={{ p: 1.5, borderTop: "1px solid #E5E7EB", mt: "auto" }}>
+      <Box sx={{ p: 1.5, borderTop: `1px solid ${SURFACE.border}`, mt: "auto" }}>
         {bottomItems.map((item) => (
           <NavButton key={item.path} {...item} />
         ))}
 
-        <Divider sx={{ my: 1 }} />
+        <Divider sx={{ my: 1, borderColor: SURFACE.border }} />
 
         {/* User info + logout */}
         {collapsed ? (
           <Tooltip title="Logout" placement="right">
-            <IconButton onClick={() => setConfirmLogout(true)} sx={{ width: "100%", "&:hover": { color: "#D92D20" } }}>
+            <IconButton
+              onClick={() => setConfirmLogout(true)}
+              sx={{
+                width: "100%", color: "text.secondary",
+                "&:hover": { color: "primary.main", bgcolor: SURFACE.hover },
+              }}
+            >
               <LogoutOutlinedIcon fontSize="small" />
             </IconButton>
           </Tooltip>
         ) : (
           <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mt: 1 }}>
             <Box>
-              <Typography variant="body2" sx={{ fontWeight: 600, color: "#202020" }}>
+              <Typography variant="body2" sx={{ fontWeight: 600, color: "text.primary" }}>
                 {roleLabel}
               </Typography>
-              <Typography variant="body2" sx={{ color: "#202020", fontSize: "13px" }}>
+              <Typography variant="body2" sx={{ color: "text.secondary", fontSize: "13px" }}>
                 {loginData?.user_name || "Not logged in"}
               </Typography>
             </Box>
             <IconButton
               size="small"
               onClick={() => setConfirmLogout(true)}
-              sx={{ color: "#1A1A1A", "&:hover": { color: "#D92D20" } }}
+              sx={{ color: "text.secondary", "&:hover": { color: "primary.main", bgcolor: SURFACE.hover } }}
             >
               <LogoutOutlinedIcon fontSize="small" />
             </IconButton>

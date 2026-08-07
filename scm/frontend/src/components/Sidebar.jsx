@@ -26,7 +26,7 @@ const COLLAPSED = 74;
  * Want it fainter? Move `bg` to #F0F2F5. Deeper? #E6E9EF.
  */
 const SURFACE = {
-  bg: "#ECEFF3",
+  bg: "#cccbccff",
   border: "#DDE1E8",
   hover: "#E2E6EC",
   disabledBg: "#E0E4EA",

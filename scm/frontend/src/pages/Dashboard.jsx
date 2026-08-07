@@ -16,9 +16,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  Select,
-  FormControl,
-  InputLabel,
   Stack,
   Chip,
   Snackbar,
@@ -53,6 +50,22 @@ const HEADERS = [
 // shared date-field styling — theme already paints the focus border red
 const dateFieldSx = {
   "& .MuiOutlinedInput-root": { bgcolor: "background.paper", height: 48 },
+};
+
+// compact toolbar controls — 32px tall instead of MUI's 40px "small"
+const compactSx = {
+  "& .MuiOutlinedInput-root": { height: 32, fontSize: "0.8rem" },
+  "& .MuiOutlinedInput-input": { py: 0, fontSize: "0.8rem" },
+  "& .MuiSelect-select": { py: 0, display: "flex", alignItems: "center" },
+};
+
+const compactBtnSx = {
+  height: 32,
+  fontSize: "0.75rem",
+  px: 1.5,
+  textTransform: "none",
+  "& .MuiButton-startIcon": { mr: 0.5 },
+  "& .MuiButton-startIcon > *": { fontSize: 16 },
 };
 
 const scrollbarSx = {
@@ -354,11 +367,12 @@ export default function Dashboard() {
               value={filter}
               onChange={(e) => handleFilterChange(e.target.value)}
               sx={{
-                width: 150,
+                width: 118,
                 bgcolor: "background.paper",
                 borderRadius: 1,
                 boxShadow: 1,
                 "& .MuiOutlinedInput-root fieldset": { border: "none" },
+                ...compactSx,
               }}
             >
               <MenuItem value="today">Today</MenuItem>
@@ -370,9 +384,10 @@ export default function Dashboard() {
             <Button
               variant="contained"
               color="secondary"
+              size="small"
               startIcon={<VisibilityIcon />}
               onClick={() => setFilterModalOpen(true)}
-              sx={{ minWidth: 120, height: 40 }}
+              sx={{ minWidth: 88, ...compactBtnSx }}
             >
               Filter
             </Button>
@@ -380,9 +395,10 @@ export default function Dashboard() {
             <Button
               variant="contained"
               color="primary"
+              size="small"
               startIcon={<DownloadIcon />}
               onClick={() => setDownloadModalOpen(true)}
-              sx={{ minWidth: 120, height: 40 }}
+              sx={{ minWidth: 100, ...compactBtnSx }}
             >
               Download
             </Button>
@@ -447,7 +463,7 @@ export default function Dashboard() {
             flexWrap: "wrap",
           }}
         >
-          <Stack direction="row" spacing={2} alignItems="center">
+          <Stack direction="row" spacing={1.5} alignItems="center">
             <Typography variant="h6" sx={{ fontWeight: 600, color: "text.primary" }}>
               Sessions
             </Typography>
@@ -456,7 +472,7 @@ export default function Dashboard() {
               placeholder="Search part code"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              sx={{ width: 200, bgcolor: "background.paper" }}
+              sx={{ width: 160, bgcolor: "background.paper", ...compactSx }}
             />
             <TextField
               select
@@ -472,7 +488,7 @@ export default function Dashboard() {
                 // never blanks out regardless of what MUI matches internally
                 renderValue: (v) => (!v || v === MODE_ALL ? "All modes" : v),
               }}
-              sx={{ width: 180, bgcolor: "background.paper" }}
+              sx={{ width: 142, bgcolor: "background.paper", ...compactSx }}
             >
               <MenuItem value={MODE_ALL}>All modes</MenuItem>
               {MODES.map((m) => (
@@ -483,46 +499,52 @@ export default function Dashboard() {
             </TextField>
           </Stack>
 
-          <Stack direction="row" spacing={2} alignItems="center">
-            <Typography variant="body2" sx={{ color: "text.secondary" }}>
+          <Stack direction="row" spacing={1.25} alignItems="center">
+            <Typography variant="caption" sx={{ color: "text.secondary" }}>
               {`Total: ${total}`}
             </Typography>
 
-            <FormControl size="small" sx={{ minWidth: 88, bgcolor: "background.paper" }}>
-              <InputLabel id="page-size-label">Rows</InputLabel>
-              <Select
-                labelId="page-size-label"
-                value={limit}
-                label="Rows"
-                onChange={(e) => {
-                  setLimit(Number(e.target.value));
-                  setPage(1);
-                }}
-              >
-                <MenuItem value={10}>10</MenuItem>
-                <MenuItem value={20}>20</MenuItem>
-                <MenuItem value={50}>50</MenuItem>
-              </Select>
-            </FormControl>
+            {/* plain TextField instead of FormControl + InputLabel — a floating
+                label overlaps the border at 32px height */}
+            <TextField
+              select
+              size="small"
+              value={limit}
+              onChange={(e) => {
+                setLimit(Number(e.target.value));
+                setPage(1);
+              }}
+              SelectProps={{ renderValue: (v) => `${v} rows` }}
+              sx={{ width: 92, bgcolor: "background.paper", ...compactSx }}
+            >
+              <MenuItem value={10}>10</MenuItem>
+              <MenuItem value={20}>20</MenuItem>
+              <MenuItem value={50}>50</MenuItem>
+            </TextField>
 
             <Button
               variant="outlined"
               color="primary"
+              size="small"
               onClick={handlePrev}
               disabled={page <= 1}
-              sx={{ minWidth: 80, height: 40 }}
+              sx={{ minWidth: 60, ...compactBtnSx }}
             >
               Prev
             </Button>
-            <Typography variant="body2" sx={{ color: "text.secondary" }}>
+            <Typography
+              variant="caption"
+              sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
+            >
               {`Page ${page} / ${totalPages}`}
             </Typography>
             <Button
               variant="outlined"
               color="primary"
+              size="small"
               onClick={handleNext}
               disabled={page >= totalPages}
-              sx={{ minWidth: 80, height: 40 }}
+              sx={{ minWidth: 60, ...compactBtnSx }}
             >
               Next
             </Button>

@@ -1887,17 +1887,32 @@ def _build_report_pdf(df: "pd.DataFrame", start_date: str, end_date: str) -> byt
     bottom_logo = os.path.join(os.getcwd(), "assets/raph.logo.png")
     page_w, page_h = landscape(A4)
 
+    from reportlab.lib.utils import ImageReader
+
+    def _draw_logo(canvas, path, x, y, width):
+        if not os.path.isfile(path):
+            print(f"[report] logo missing: {path}")
+            return
+        iw, ih = ImageReader(path).getSize()
+        canvas.drawImage(path, x, y, width=width, height=width * ih / iw, mask="auto")
+
+
     def draw_footer(canvas):
         canvas.setLineWidth(0.5)
         canvas.line(10 * mm, 15 * mm, page_w - 10 * mm, 15 * mm)
         canvas.setFont("Helvetica", 8)
         canvas.drawString(10 * mm, 9 * mm, f"Page {canvas.getPageNumber()}")
-        canvas.drawRightString(page_w - 30 * mm, 9 * mm, "Powered by")
-        if os.path.isfile(bottom_logo):
-            canvas.drawImage(
-                bottom_logo, page_w - 28 * mm, 5 * mm, width=15 * mm,
-                preserveAspectRatio=True, mask="auto",
-            )
+        
+        logo_w = 18 * mm
+        logo_x = page_w - 12 * mm - logo_w
+        canvas.drawRightString(logo_x - 2 * mm, 8 * mm, "Powered by")
+        _draw_logo(canvas, bottom_logo, logo_x, 5 * mm, logo_w)
+
+        # if os.path.isfile(bottom_logo):
+        #     canvas.drawImage(
+        #         bottom_logo, page_w - 28 * mm, 5 * mm, width=15 * mm,
+        #         preserveAspectRatio=True, mask="auto",
+        #     )
 
     def first_page(canvas, doc):
         canvas.saveState()

@@ -2,13 +2,7 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { useParams, useLocation } from "react-router-dom";
-import {
-  Box,
-  Paper,
-  Typography,
-  Button,
-  Chip,
-} from "@mui/material";
+import { Box, Paper, Typography, Button, Chip } from "@mui/material";
 import VideocamIcon from "@mui/icons-material/Videocam";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import StopIcon from "@mui/icons-material/Stop";
@@ -23,18 +17,6 @@ const STATUS = {
   READY: { label: "READY", dot: "#ca8a04", bg: "#FEF9E7" },
   RUNNING: { label: "RUNNING", dot: "#16a34a", bg: "#EAF7EE" },
   STOPPED: { label: "STOPPED", dot: "#dc2626", bg: "#FCEAEA" },
-};
-
-const MOCK_SESSION = {
-  part_code: "PC-2002",
-  part_name: "Sample Casting Block",
-  session_start: new Date().toISOString(),
-  defect_parameters: {
-    d1: { defect_name: "dent", confidence_threshold: 0.6 },
-    d2: { defect_name: "scratch", confidence_threshold: 0.5 },
-    d3: { defect_name: "crack", confidence_threshold: 0.7 },
-    d4: { defect_name: "thread_missing", confidence_threshold: 0.8 },
-  },
 };
 
 const StatusPill = ({ status }) => {
@@ -92,8 +74,7 @@ const DefectDetectionPage = () => {
 
   const [status, setStatus] = useState("READY");
   const [sessionInfo, setSessionInfo] = useState(null);
-  const [usingMockData, setUsingMockData] = useState(false);
-  const [defectCounts, setDefectCounts] = useState({});
+  const [loadError, setLoadError] = useState(false);
   const [defectStatus, setDefectStatus] = useState({});
   const [previewFrame, setPreviewFrame] = useState(null);
   const [capturing, setCapturing] = useState(false);
@@ -106,16 +87,12 @@ const DefectDetectionPage = () => {
     const forwardedName = location.state?.part_name;
 
     if (forwarded) {
-      const info = {
+      setSessionInfo({
         part_code: forwarded.part_code,
         part_name: forwardedName || forwarded.part_name,
         session_start: new Date().toISOString(),
         defect_parameters: forwarded.defect_parameters || null,
-      };
-      setSessionInfo(info);
-      setDefectCounts(
-        Object.fromEntries(Object.keys(info.defect_parameters || {}).map((d) => [d, 0])),
-      );
+      });
       return;
     }
 
@@ -125,26 +102,19 @@ const DefectDetectionPage = () => {
         const part = await axios.get(`${BASE_URL}/dashboard/part-details`, {
           params: { part_code: res.data.part_code },
         });
-        const info = { ...res.data, defect_parameters: part.data.defect_parameters };
-        setSessionInfo(info);
-        setDefectCounts(
-          Object.fromEntries(Object.keys(info.defect_parameters || {}).map((d) => [d, 0])),
-        );
+        setSessionInfo({ ...res.data, defect_parameters: part.data.defect_parameters });
+        setLoadError(false);
       })
-      .catch(() => {
-        setSessionInfo(MOCK_SESSION);
-        setDefectCounts(
-          Object.fromEntries(Object.keys(MOCK_SESSION.defect_parameters).map((d) => [d, 0])),
-        );
-        setUsingMockData(true);
-        toast.warn("No matching session found — showing preview data");
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err.response?.data?.detail || `Session #${sessionId} could not be loaded`);
       });
   }, [sessionId, location.state]);
 
-  // Real session — one capture -> infer -> process -> result cycle per
-  // button press (not continuous), unlike Counting's polling loop.
+  // One capture -> infer -> process -> result cycle per button press
+  // (not continuous), unlike Counting's polling loop.
   const handleCapture = async () => {
-    if (usingMockData || capturing) return;
+    if (capturing) return;
     setCapturing(true);
     try {
       const res = await axios.post(`${BASE_URL}/dashboard/session/${sessionId}/capture`);
@@ -158,19 +128,6 @@ const DefectDetectionPage = () => {
   };
 
   useEffect(() => {
-    if (status !== "RUNNING" || !usingMockData) return;
-    const interval = setInterval(() => {
-      setDefectCounts((prev) => {
-        const keys = Object.keys(prev);
-        if (keys.length === 0) return prev;
-        const randomKey = keys[Math.floor(Math.random() * keys.length)];
-        return { ...prev, [randomKey]: prev[randomKey] + 1 };
-      });
-    }, 1500);
-    return () => clearInterval(interval);
-  }, [status, usingMockData]);
-
-  useEffect(() => {
     return () => {
       if (status === "RUNNING") clearActiveSession();
     };
@@ -181,16 +138,12 @@ const DefectDetectionPage = () => {
     setStatus("RUNNING");
     setActiveSession({ sessionId: Number(sessionId), mode: "Defect Detection" });
     toast.success("Defect detection started");
-    if (!usingMockData) handleCapture();
+    handleCapture();
   };
 
   const stopSession = async () => {
-    if (!usingMockData) {
-      await axios.post(`${BASE_URL}/dashboard/stop`, { session_id: Number(sessionId) });
-      toast.success("Session stopped and saved successfully");
-    } else {
-      toast.info("Preview session stopped");
-    }
+    await axios.post(`${BASE_URL}/dashboard/stop`, { session_id: Number(sessionId) });
+    toast.success("Session stopped and saved successfully");
     clearActiveSession();
     setStatus("STOPPED");
     setPreviewFrame(null);
@@ -216,20 +169,11 @@ const DefectDetectionPage = () => {
   const hasRun = status !== "READY";
   const defectRows = Object.entries(sessionInfo?.defect_parameters || {}).map(
     ([instanceKey, config]) => {
-      if (usingMockData) {
-        const count = defectCounts[instanceKey] ?? 0;
-        const result = hasRun ? (count > 0 ? "NOK" : "OK") : null;
-        return {
-          name: config?.defect_name ?? instanceKey,
-          threshold: config?.confidence_threshold ?? null,
-          count,
-          result,
-        };
-      }
       const result = hasRun ? (defectStatus[instanceKey] ?? null) : null;
       return {
         name: config?.defect_name ?? instanceKey,
         threshold: config?.confidence_threshold ?? null,
+        camera: config?.camera ?? null,
         count: result === "NOK" ? 1 : 0,
         result,
       };
@@ -245,11 +189,11 @@ const DefectDetectionPage = () => {
 
   return (
     <Box sx={{ p: { xs: 2, sm: 3, md: 4 }, width: "100%" }}>
-      {usingMockData && (
+      {loadError && (
         <Chip
-          label="Preview mode — no matching session in DB, showing mock data"
+          label={`Session #${sessionId} could not be loaded — check the session ID and try again`}
           size="small"
-          sx={{ mb: 2, bgcolor: "#fff3e0", color: "#e65100", fontWeight: 600 }}
+          sx={{ mb: 2, bgcolor: "#FCEAEA", color: "#b91c1c", fontWeight: 600 }}
         />
       )}
 
@@ -383,9 +327,7 @@ const DefectDetectionPage = () => {
                 "&:hover": { boxShadow: 2 },
               }}
               onClick={status === "READY" ? handleStart : handleCapture}
-              disabled={
-                status === "STOPPED" || (status === "RUNNING" && (usingMockData || capturing))
-              }
+              disabled={status === "STOPPED" || capturing || !sessionInfo}
             >
               {status === "READY" ? "Start" : capturing ? "Capturing…" : "Capture"}
             </Button>

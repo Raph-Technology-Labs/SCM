@@ -25,8 +25,9 @@ const COLLAPSED = 74;
  * rather than a different material. Everything else comes from theme tokens.
  * Want it fainter? Move `bg` to #F0F2F5. Deeper? #E6E9EF.
  */
+
 const SURFACE = {
-  bg: "#cccbccff",
+  bg: "#e9e1e0ff",
   border: "#DDE1E8",
   hover: "#E2E6EC",
   disabledBg: "#E0E4EA",

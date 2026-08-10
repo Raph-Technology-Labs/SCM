@@ -2,16 +2,7 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { useParams, useLocation } from "react-router-dom";
-import {
-  Box,
-  Paper,
-  Typography,
-  Button,
-  Chip,
-  Fade,
-  useTheme,
-  useMediaQuery,
-} from "@mui/material";
+import { Box, Paper, Typography, Button, Chip, Fade } from "@mui/material";
 import VideocamIcon from "@mui/icons-material/Videocam";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import StopIcon from "@mui/icons-material/Stop";
@@ -29,15 +20,6 @@ const STATUS = {
   READY: { label: "READY", dot: "#ca8a04", bg: "#FEF9E7" },
   RUNNING: { label: "RUNNING", dot: "#16a34a", bg: "#EAF7EE" },
   STOPPED: { label: "STOPPED", dot: "#dc2626", bg: "#FCEAEA" },
-};
-
-const MOCK_SESSION = {
-  part_code: "PC-1001",
-  part_name: "Sample Bolt M6",
-  part_weight: 4.0,
-  count: 128,
-  total_weight: 512.4,
-  session_start: new Date().toISOString(),
 };
 
 const StatusPill = ({ status }) => {
@@ -79,15 +61,13 @@ const StatusPill = ({ status }) => {
 };
 
 const CountingPage = () => {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down("md"));
   const { sessionId } = useParams();
   const location = useLocation();
 
   const [status, setStatus] = useState("READY");
   const [count, setCount] = useState(0);
   const [sessionInfo, setSessionInfo] = useState(null);
-  const [usingMockData, setUsingMockData] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [previewFrame, setPreviewFrame] = useState(null);
 
   const { confirm, ConfirmDialog } = useConfirmDialog();
@@ -102,6 +82,7 @@ const CountingPage = () => {
         part_code: forwarded.part_code,
         part_name: forwardedName || forwarded.part_name,
         part_weight: forwarded.part_weight,
+        image_url: forwarded.image_url || null,
         count: 0,
         total_weight: null,
         session_start: new Date().toISOString(),
@@ -114,12 +95,11 @@ const CountingPage = () => {
       .then((res) => {
         setSessionInfo(res.data);
         setCount(res.data.count || 0);
+        setLoadError(false);
       })
-      .catch(() => {
-        setSessionInfo(MOCK_SESSION);
-        setCount(MOCK_SESSION.count);
-        setUsingMockData(true);
-        toast.warn("No matching session found — showing preview data");
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err.response?.data?.detail || `Session #${sessionId} could not be loaded`);
       });
   }, [sessionId, location.state]);
 
@@ -130,7 +110,7 @@ const CountingPage = () => {
   // serializes captures per session, that backlog compounds into growing
   // lag rather than a steady live feed.
   useEffect(() => {
-    if (status !== "RUNNING" || usingMockData) return;
+    if (status !== "RUNNING") return;
     let cancelled = false;
     let timeoutId;
 
@@ -153,11 +133,11 @@ const CountingPage = () => {
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [sessionId, status, usingMockData]);
+  }, [sessionId, status]);
 
-  // Safety: if this page unmounts (e.g. component removed for any reason)
-  // while a session it registered is still active, clear it so the guard
-  // dialog doesn't fire for a session that's no longer being viewed.
+  // Safety: if this page unmounts while a session it registered is still
+  // active, clear it so the guard dialog doesn't fire for a session that's
+  // no longer being viewed.
   useEffect(() => {
     return () => {
       if (status === "RUNNING") clearActiveSession();
@@ -175,12 +155,8 @@ const CountingPage = () => {
   // button and Layout's centralized nav-guard dialog call this after their
   // own confirm step resolves to true.
   const stopSession = async () => {
-    if (!usingMockData) {
-      await axios.post(`${BASE_URL}/dashboard/stop`, { session_id: Number(sessionId) });
-      toast.success("Session stopped and saved successfully");
-    } else {
-      toast.info("Preview session stopped");
-    }
+    await axios.post(`${BASE_URL}/dashboard/stop`, { session_id: Number(sessionId) });
+    toast.success("Session stopped and saved successfully");
     clearActiveSession();
     setStatus("STOPPED");
     setPreviewFrame(null);
@@ -205,11 +181,11 @@ const CountingPage = () => {
 
   return (
     <Box sx={{ p: { xs: 2, sm: 3, md: 4 }, width: "100%" }}>
-      {usingMockData && (
+      {loadError && (
         <Chip
-          label="Preview mode — no matching session in DB, showing mock data"
+          label={`Session #${sessionId} could not be loaded — check the session ID and try again`}
           size="small"
-          sx={{ mb: 2, bgcolor: "#fff3e0", color: "#e65100", fontWeight: 600 }}
+          sx={{ mb: 2, bgcolor: "#FCEAEA", color: "#b91c1c", fontWeight: 600 }}
         />
       )}
 
@@ -340,7 +316,7 @@ const CountingPage = () => {
                 "&:hover": { boxShadow: 2 },
               }}
               onClick={handleStart}
-              disabled={status !== "READY"}
+              disabled={status !== "READY" || !sessionInfo}
             >
               Start
             </Button>
@@ -433,7 +409,9 @@ const CountingPage = () => {
               backgroundImage: (t) => t.palette.gradients?.subtle,
             }}
           >
-            <Typography sx={{ fontSize: 13, fontWeight: 800, color: "text.secondary", letterSpacing: 2 }}>
+            <Typography
+              sx={{ fontSize: 13, fontWeight: 800, color: "text.secondary", letterSpacing: 2 }}
+            >
               TOTAL COUNT
             </Typography>
             <Fade in key={count} timeout={300}>

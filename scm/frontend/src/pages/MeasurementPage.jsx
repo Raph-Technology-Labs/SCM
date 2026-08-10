@@ -34,19 +34,6 @@ const STATUS = {
   STOPPED: { label: "STOPPED", dot: "#dc2626", bg: "#FCEAEA" },
 };
 
-const MOCK_SESSION = {
-  part_code: "PC-3003",
-  part_name: "Sample Shaft",
-  session_start: new Date().toISOString(),
-  image_url: null,
-  measurement_parameters: {
-    part_length: [{ min_value: 24.5, max_value: 25.5, camera: 1 }],
-    part_width: [{ min_value: 5.8, max_value: 6.2, camera: 1 }],
-    part_angle: [{ min_value: 88, max_value: 92, camera: 2 }],
-    part_arch_length: [{ min_value: 15.0, max_value: 16.0, camera: 2 }],
-  },
-};
-
 const StatusPill = ({ status }) => {
   const s = STATUS[status];
   return (
@@ -102,7 +89,7 @@ const MeasurementPage = () => {
 
   const [status, setStatus] = useState("READY");
   const [sessionInfo, setSessionInfo] = useState(null);
-  const [usingMockData, setUsingMockData] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [measuredValues, setMeasuredValues] = useState({});
   const [previewFrame, setPreviewFrame] = useState(null);
   const [capturing, setCapturing] = useState(false);
@@ -136,11 +123,11 @@ const MeasurementPage = () => {
           image_url: part.data.image_url || null,
           measurement_parameters: part.data.measurement_parameters,
         });
+        setLoadError(false);
       })
-      .catch(() => {
-        setSessionInfo(MOCK_SESSION);
-        setUsingMockData(true);
-        toast.warn("No matching session found — showing preview data");
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err.response?.data?.detail || `Session #${sessionId} could not be loaded`);
       });
   }, [sessionId, location.state]);
 
@@ -158,26 +145,10 @@ const MeasurementPage = () => {
     );
   }, [sessionInfo]);
 
-  useEffect(() => {
-    if (status !== "RUNNING" || !usingMockData || paramRows.length === 0) return;
-    const interval = setInterval(() => {
-      setMeasuredValues((prev) => {
-        const next = { ...prev };
-        paramRows.forEach((row) => {
-          const spread = row.max_value - row.min_value;
-          const jitter = (Math.random() - 0.3) * spread * 1.4;
-          next[row.key] = +(row.min_value + spread / 2 + jitter).toFixed(2);
-        });
-        return next;
-      });
-    }, 1800);
-    return () => clearInterval(interval);
-  }, [status, usingMockData, paramRows]);
-
-  // Real session — one capture -> infer -> measure -> result cycle per
-  // button press (not continuous), unlike Counting's polling loop.
+  // One capture -> infer -> measure -> result cycle per button press
+  // (not continuous), unlike Counting's polling loop.
   const handleCapture = async () => {
-    if (usingMockData || capturing) return;
+    if (capturing) return;
     setCapturing(true);
     try {
       const res = await axios.post(`${BASE_URL}/dashboard/session/${sessionId}/capture`);
@@ -209,16 +180,12 @@ const MeasurementPage = () => {
     setStatus("RUNNING");
     setActiveSession({ sessionId: Number(sessionId), mode: "Measurement" });
     toast.success("Measurement started");
-    if (!usingMockData) handleCapture();
+    handleCapture();
   };
 
   const stopSession = async () => {
-    if (!usingMockData) {
-      await axios.post(`${BASE_URL}/dashboard/stop`, { session_id: Number(sessionId) });
-      toast.success("Session stopped and saved successfully");
-    } else {
-      toast.info("Preview session stopped");
-    }
+    await axios.post(`${BASE_URL}/dashboard/stop`, { session_id: Number(sessionId) });
+    toast.success("Session stopped and saved successfully");
     clearActiveSession();
     setStatus("STOPPED");
     setPreviewFrame(null);
@@ -250,17 +217,20 @@ const MeasurementPage = () => {
     return { ...row, measured: measured ?? null, result };
   });
 
-  const overallResult = displayRows.length > 0 && displayRows.every((r) => r.result != null)
-    ? (displayRows.every((r) => r.result === "OK") ? "OK" : "NOK")
-    : null;
+  const overallResult =
+    displayRows.length > 0 && displayRows.every((r) => r.result != null)
+      ? displayRows.every((r) => r.result === "OK")
+        ? "OK"
+        : "NOK"
+      : null;
 
   return (
     <Box sx={{ p: { xs: 2, sm: 3, md: 4 }, width: "100%" }}>
-      {usingMockData && (
+      {loadError && (
         <Chip
-          label="Preview mode — no matching session in DB, showing mock data"
+          label={`Session #${sessionId} could not be loaded — check the session ID and try again`}
           size="small"
-          sx={{ mb: 2, bgcolor: "#fff3e0", color: "#e65100", fontWeight: 600 }}
+          sx={{ mb: 2, bgcolor: "#FCEAEA", color: "#b91c1c", fontWeight: 600 }}
         />
       )}
 
@@ -395,9 +365,7 @@ const MeasurementPage = () => {
                 "&:hover": { boxShadow: 2 },
               }}
               onClick={status === "READY" ? handleStart : handleCapture}
-              disabled={
-                status === "STOPPED" || (status === "RUNNING" && (usingMockData || capturing))
-              }
+              disabled={status === "STOPPED" || capturing || !sessionInfo}
             >
               {status === "READY" ? "Start" : capturing ? "Capturing…" : "Capture"}
             </Button>
@@ -561,12 +529,8 @@ const MeasurementPage = () => {
                   <TableCell sx={{ fontWeight: 700, bgcolor: "background.default" }}>
                     Parameter
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 700, bgcolor: "background.default" }}>
-                    Min
-                  </TableCell>
-                  <TableCell sx={{ fontWeight: 700, bgcolor: "background.default" }}>
-                    Max
-                  </TableCell>
+                  <TableCell sx={{ fontWeight: 700, bgcolor: "background.default" }}>Min</TableCell>
+                  <TableCell sx={{ fontWeight: 700, bgcolor: "background.default" }}>Max</TableCell>
                   <TableCell sx={{ fontWeight: 700, bgcolor: "background.default" }}>
                     Measured
                   </TableCell>

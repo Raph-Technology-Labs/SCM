@@ -413,11 +413,11 @@ export default function Dashboard() {
               sx={{
                 p: 2,
                 textAlign: "center",
-                borderTop: "3px solid transparent",
+                // borderTop: "3px solid transparent",
                 transition: "all .18s ease",
                 "&:hover": {
                   bgcolor: "peach.main",
-                  borderTopColor: "primary.main",
+                  // borderTopColor: "primary.main",
                   boxShadow: 3,
                 },
               }}

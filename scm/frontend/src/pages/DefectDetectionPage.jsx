@@ -428,8 +428,8 @@ const DefectDetectionPage = () => {
               borderRadius: 3,
               border: "1px solid",
               borderColor: "divider",
-              borderLeft: "4px solid",
-              borderLeftColor: "error.main",
+              // borderLeft: "4px solid",
+              // borderLeftColor: "error.main",
               flex: 1,
             }}
           >

@@ -27,7 +27,7 @@ const COLLAPSED = 74;
  */
 
 const SURFACE = {
-  bg: "#e9e1e0ff",
+  // bg: "#e9e1e0ff",
   border: "#DDE1E8",
   hover: "#E2E6EC",
   disabledBg: "#E0E4EA",
@@ -91,7 +91,7 @@ const Sidebar = ({ loginData, onNavigate }) => {
       sx={{
         width: collapsed ? COLLAPSED : EXPANDED,
         transition: "width 0.2s ease",
-        bgcolor: SURFACE.bg,
+        bgcolor: "accent.light", 
         color: "text.primary",
         display: "flex",
         flexDirection: "column",

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import Login from "./pages/Login";
@@ -36,7 +36,7 @@ export default function App() {
 
   return (
     <SessionProvider>
-    <BrowserRouter>
+    <HashRouter>
     {/* Single global toast container, standard color scheme
           (green = success, red = error, orange = warning, blue = info).
           Every page just calls toast.success/error/warn/info — no
@@ -69,7 +69,7 @@ export default function App() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
     </SessionProvider>
   );
 }

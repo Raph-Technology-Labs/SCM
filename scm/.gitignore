@@ -6,6 +6,7 @@ __pycache__/
 # node
 node_modules/
 dist/
+release
 # models / data
 backend/models/*.pt
 *.db-wal

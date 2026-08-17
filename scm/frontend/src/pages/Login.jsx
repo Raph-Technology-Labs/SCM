@@ -4,8 +4,8 @@ import {
   Box, Button, TextField, Typography, Paper, IconButton, InputAdornment, CircularProgress,
 } from "@mui/material";
 import { Visibility, VisibilityOff, LockOutlined, PersonOutlined } from "@mui/icons-material";
-
-const BASE = import.meta.env.VITE_BASE_URL;
+import { BASE_URL as BASE } from "../api/baseUrl";
+// const BASE = import.meta.env.VITE_BASE_URL;
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState("");

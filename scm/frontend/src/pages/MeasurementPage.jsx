@@ -25,8 +25,9 @@ import Inventory2Icon from "@mui/icons-material/Inventory2";
 import CameraAltIcon from "@mui/icons-material/CameraAlt";
 import { useConfirmDialog } from "../components/ConfirmDialog";
 import { useSession } from "../context/SessionContext";
+import { BASE_URL as BASE } from "../api/baseUrl";
 
-const BASE_URL = import.meta.env.VITE_BASE_URL;
+// const BASE_URL = import.meta.env.VITE_BASE_URL;
 
 const STATUS = {
   READY: { label: "READY", dot: "#ca8a04", bg: "#FEF9E7" },

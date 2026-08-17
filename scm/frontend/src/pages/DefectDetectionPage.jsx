@@ -10,8 +10,9 @@ import TagIcon from "@mui/icons-material/Tag";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import { useConfirmDialog } from "../components/ConfirmDialog";
 import { useSession } from "../context/SessionContext";
+import { BASE_URL } from "../api/baseUrl";
 
-const BASE_URL = import.meta.env.VITE_BASE_URL;
+// const BASE_URL = import.meta.env.VITE_BASE_URL;
 
 const STATUS = {
   READY: { label: "READY", dot: "#ca8a04", bg: "#FEF9E7" },

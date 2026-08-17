@@ -25,8 +25,9 @@ import {
 import DownloadIcon from "@mui/icons-material/Download";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import axios from "axios";
+import { BASE_URL } from "../api/baseUrl";
 
-const BASE_URL = import.meta.env.VITE_BASE_URL;
+// const BASE_URL = import.meta.env.VITE_BASE_URL;
 
 // "all" is a real value, not "" — MUI Select treats an empty string as
 // "nothing selected" and leaves the closed field blank.

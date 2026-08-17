@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Box, Chip, Typography, Paper, CircularProgress, Stack, Button } from "@mui/material";
 import axios from "axios";
-
-const BASE = import.meta.env.VITE_BASE_URL || "";
+import { BASE_URL as BASE } from "../api/baseUrl";
+// const BASE = import.meta.env.VITE_BASE_URL || "";
 
 const HealthCheck = () => {
   const [loading, setLoading] = useState(true);

@@ -8,8 +8,8 @@ import axios from "axios";
 import Autocomplete from "@mui/material/Autocomplete";
 import { toast, ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-
-const BASE = import.meta.env.VITE_BASE_URL || "";
+import { BASE_URL as BASE } from "../api/baseUrl";
+// const BASE = import.meta.env.VITE_BASE_URL || "";
 
 const MODES = ["Counting", "Defect Detection", "Measurement"];
 

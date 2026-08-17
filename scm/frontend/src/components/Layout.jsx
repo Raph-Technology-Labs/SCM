@@ -12,8 +12,8 @@ import { Outlet, useNavigate, useLocation } from "react-router-dom";
 import axios from "axios";
 import Sidebar from "./Sidebar";
 import { useSession } from "../context/SessionContext";
-
-const BASE_URL = import.meta.env.VITE_BASE_URL;
+import { BASE_URL as BASE } from "../api/baseUrl";
+// const BASE_URL = import.meta.env.VITE_BASE_URL;
 
 // Any path under these prefixes is a "live session" page that needs guarding.
 const SESSION_PATH_PREFIXES = ["/counting", "/defect-detection", "/measurement"];

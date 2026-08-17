@@ -12,9 +12,10 @@ if (isDev) {
 
 // Remote/VM Linux boxes often have flaky GPU drivers -> white window.
 // Remove these two lines if rendering feels sluggish on good hardware.
-// app.disableHardwareAcceleration();
-// app.commandLine.appendSwitch("disable-gpu");
-
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch("disable-gpu");
+app.commandLine.appendSwitch("disable-dev-shm-usage");
+app.commandLine.appendSwitch("no-sandbox");
 app.commandLine.appendSwitch("no-sandbox");
 
 let mainWindow = null;
@@ -76,7 +77,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
-    createSplash();
+    // createSplash();
     try {
       const { port } = await startBackend({
         isPackaged: app.isPackaged,

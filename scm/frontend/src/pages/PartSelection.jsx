@@ -28,8 +28,8 @@ import {
 import { useNavigate, useLocation } from "react-router-dom";
 import ClearIcon from "@mui/icons-material/Clear";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
-
-const BASE_URL = import.meta.env.VITE_BASE_URL;
+import { BASE_URL } from "../api/baseUrl";
+// const BASE_URL = import.meta.env.VITE_BASE_URL;
 
 // Route the operator lands on after "Start Session", based on the
 // selected part's actual mode_of_operation in the DB.

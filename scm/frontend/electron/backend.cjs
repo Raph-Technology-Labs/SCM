@@ -30,12 +30,24 @@ function resolveCommand({ isPackaged, resourcesPath, backendRoot, port }) {
     };
   }
 
-  // Dev: use the backend venv. Checks venv/ then .venv/, falls back to python3.
-  const candidates = [
-    path.join(backendRoot, "venv", "bin", "python"),
-    path.join(backendRoot, ".venv", "bin", "python"),
-  ];
-  const py = candidates.find((p) => fs.existsSync(p)) || "python3";
+  // Dev: BACKEND_PYTHON from .env, else a venv inside backend/.
+  // NO bare "python3" fallback — system Python lacks fastapi and the
+  // resulting ModuleNotFoundError is far more confusing than a clear throw.
+  const py =
+    (process.env.BACKEND_PYTHON && process.env.BACKEND_PYTHON.trim()) ||
+    [
+      path.join(backendRoot, "venv", "bin", "python"),
+      path.join(backendRoot, ".venv", "bin", "python"),
+    ].find((p) => fs.existsSync(p));
+
+  if (!py || !fs.existsSync(py)) {
+    throw new Error(
+      `Python interpreter not found.\n\n` +
+      `Set BACKEND_PYTHON in frontend/.env to your venv's python.\n` +
+      `Find it with:  vision_env && which python\n\n` +
+      `Tried: ${py || "(nothing configured)"}`
+    );
+  }
 
   return {
     cmd: py,
@@ -69,7 +81,16 @@ async function startBackend({ isPackaged, resourcesPath, backendRoot, logDir }) 
   fs.mkdirSync(logDir, { recursive: true });
   const logPath = path.join(logDir, "backend.log");
   logStream = fs.createWriteStream(logPath, { flags: "a" });
-  logStream.write(`\n=== ${new Date().toISOString()} :: ${cmd} ${args.join(" ")} (cwd=${cwd}) ===\n`);
+
+  logStream.write(`\n=== ${new Date().toISOString()} ===\n`);
+  logStream.write(`interpreter: ${cmd}\n`);
+  logStream.write(`args: ${args.join(" ")}\n`);
+  logStream.write(`cwd: ${cwd}\n`);
+  logStream.write(`port: ${port}\n\n`);
+
+  // Also to the terminal, so you see it without opening the log
+  console.log(`[backend] ${cmd} ${args.join(" ")}`);
+  console.log(`[backend] log: ${logPath}`);
 
   proc = spawn(cmd, args, {
     cwd,

@@ -49,6 +49,16 @@ class LucidCamera(BaseCamera):
         # "access denied" errors on the next retry.
         try:
             nodemap = device.nodemap
+
+            # The device persists DeviceLinkThroughputLimit across sessions
+            # (e.g. left over from a previous calibration on a different
+            # network). A stale low limit silently caps the achievable frame
+            # rate, which then makes AcquisitionFrameRate writes below fail
+            # with a native error mislabeled by the SDK as a "SaveC" error.
+            # Always max it out so the configured fps is actually reachable.
+            throughput_node = nodemap["DeviceLinkThroughputLimit"]
+            throughput_node.value = throughput_node.max
+
             nodemap["ExposureAuto"].value = "Off"
             nodemap["ExposureTime"].value = float(cfg.exposure_us)
             nodemap["GainAuto"].value = "Off"

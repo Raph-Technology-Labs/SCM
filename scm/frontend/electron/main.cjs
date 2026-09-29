@@ -10,13 +10,21 @@ if (isDev) {
   try { require("dotenv").config({ path: path.join(frontendRoot, ".env") }); } catch {}
 }
 
-// Remote/VM Linux boxes often have flaky GPU drivers -> white window.
-// Remove these two lines if rendering feels sluggish on good hardware.
-app.disableHardwareAcceleration();
-app.commandLine.appendSwitch("disable-gpu");
-app.commandLine.appendSwitch("disable-dev-shm-usage");
-app.commandLine.appendSwitch("no-sandbox");
-app.commandLine.appendSwitch("no-sandbox");
+// On a hybrid-GPU Linux laptop (Intel + NVIDIA) running native Wayland,
+// Chromium's GPU process can silently "succeed" (paints, fires ready-to-show)
+// while the compositor never actually presents the window, if it lands on
+// the NVIDIA render node. VS Code (also Electron) works around this on the
+// exact same kind of machine by pinning to the Wayland ozone backend and
+// explicitly overriding the render node to the first GPU (typically the
+// integrated one). Harmless on a single-GPU machine or a real X11 session.
+//
+// Deliberately NOT setting --no-sandbox / --disable-dev-shm-usage here:
+// testing on this machine showed the sandboxed broker process is what makes
+// shared-memory setup work at all under Wayland; disabling it reproduced the
+// same "window never appears" failure, and combined with the flags above it
+// made things measurably worse (a runaway shared-memory error loop).
+app.commandLine.appendSwitch("ozone-platform", "wayland");
+app.commandLine.appendSwitch("render-node-override", "/dev/dri/renderD128");
 
 let mainWindow = null;
 let splash = null;
@@ -44,7 +52,6 @@ function createMainWindow() {
 
   if (isDev) {
     mainWindow.loadURL(`http://localhost:${process.env.VITE_DEV_PORT || 5180}`);
-    mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(frontendRoot, "dist", "index.html"));
   }
@@ -77,7 +84,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
-    // createSplash();
+    createSplash();
     try {
       const { port } = await startBackend({
         isPackaged: app.isPackaged,

@@ -54,16 +54,16 @@ counting:
 
 defect_detection:
   guide_roi: {x1: 371, y1: 56, x2: 1582, y2: 1005}
-  model_path: "defect_rust_2.pt"
+  model_path: "yolo11n.pt"
   device: "cpu"
   camera:
     type: "lucid"
     serial: ""
-    ip: "192.168.6.41"
+    ip: "192.168.7.41"
     resolution: {w: 1920, h: 1000}
     fps: 30
-    exposure_us: 6000.0
-    gain: 4.0
+    exposure_us: 1500.0
+    gain: 2.0
     pixel_format: "BGR8"
     roi: {x: 0, y: 0, w: 1920, h: 1000}
   # NOTE: per-defect confidence thresholds are NO LONGER here — they come

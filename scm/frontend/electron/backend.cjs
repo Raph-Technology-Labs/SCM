@@ -96,7 +96,17 @@ async function startBackend({ isPackaged, resourcesPath, backendRoot, logDir }) 
     cwd,
     detached: true,                      // own process group -> kill children too
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, PYTHONUNBUFFERED: "1" },
+    env: {
+      ...process.env,
+      PYTHONUNBUFFERED: "1",
+      // `cmd` is launched by full path without activating its venv, so bare
+      // `pip`/`python` on PATH would resolve to whatever's first there
+      // (often not this venv at all). Some deps (e.g. arena_api) shell out to
+      // bare `pip show` at import time to read their own version, and silently
+      // fail if that resolves to the wrong install. Prepend the interpreter's
+      // own bin/ so PATH matches what "activating" the venv would give it.
+      PATH: `${path.dirname(cmd)}${path.delimiter}${process.env.PATH || ""}`,
+    },
   });
 
   proc.stdout.pipe(logStream);

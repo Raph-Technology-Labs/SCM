@@ -484,11 +484,28 @@ const PartSelection = () => {
                 borderRadius: 2,
                 bgcolor: "peach.main",
                 minHeight: { xs: 160, md: 220 },
+                overflow: "hidden",
               }}
             >
+              {selectedPartDetails?.image ? (
+              <Box
+                component="img"
+                src={selectedPartDetails.image}
+                alt={selectedPartDetails.part_name || "Part"}
+                sx={{
+                  maxWidth: "100%",
+                  maxHeight: 220,
+                  width: "auto",
+                  height: "auto",
+                  objectFit: "contain",
+                  display: "block",
+                }}
+              />
+            ) : (
               <Typography color="text.secondary">
-                <CameraAltIcon fontSize="small" /> Upload item image
+                <CameraAltIcon fontSize="small" /> No image available
               </Typography>
+            )}
             </Box>
 
             <Box sx={{ display: "flex", gap: 2 }}>

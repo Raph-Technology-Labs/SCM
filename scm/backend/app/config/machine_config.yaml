@@ -53,8 +53,9 @@ counting:
     loop: true
 
 defect_detection:
+
   guide_roi: {x1: 371, y1: 56, x2: 1582, y2: 1005}
-  model_path: "yolo11n.pt"
+  model_path: "exp-4.pt"
   device: "cpu"
   camera:
     type: "lucid"
@@ -62,19 +63,24 @@ defect_detection:
     ip: "192.168.7.41"
     resolution: {w: 1920, h: 1000}
     fps: 30
-    exposure_us: 1500.0
+    exposure_us: 700.0
     gain: 2.0
     pixel_format: "BGR8"
     roi: {x: 0, y: 0, w: 1920, h: 1000}
   # NOTE: per-defect confidence thresholds are NO LONGER here — they come
   # from parts.defect_parameters[*].confidence_threshold at runtime.
   # Optional fallback if a part has no threshold set:
-  default_confidence_threshold: 0.75
+  default_confidence_threshold: 0.2
   display:
     show_bboxes: true
+    infer_button: true
   simulator:
-    enabled: false
+    enabled: true
+    # images_dir takes priority when non-empty (see camera/factory.py).
+    # Clear images_dir to fall back to video_path instead.
+    images_dir: "/home/dhanashree/Documents/bajaj_dataset"
     video_path: "assets/simulator/counting_sample.mp4"
+    loop: true
 
 measurement:
   guide_roi: {x1: 306, y1: 157, x2: 1470, y2: 750}

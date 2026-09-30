@@ -50,12 +50,15 @@ class LucidCamera(BaseCamera):
         try:
             nodemap = device.nodemap
 
-            # The device persists DeviceLinkThroughputLimit across sessions
-            # (e.g. left over from a previous calibration on a different
-            # network). A stale low limit silently caps the achievable frame
-            # rate, which then makes AcquisitionFrameRate writes below fail
-            # with a native error mislabeled by the SDK as a "SaveC" error.
-            # Always max it out so the configured fps is actually reachable.
+            # The device persists DeviceLinkThroughputLimit (and whether it's
+            # even enforced) across sessions, e.g. left over from a previous
+            # calibration on a different network. DeviceLinkThroughputLimit
+            # is read-only whenever DeviceLinkThroughputLimitMode is "Off" —
+            # writing it then fails with a native error mislabeled by the
+            # SDK as a "SaveC" error, regardless of the value written. Turn
+            # the mode on first, then always max the limit out so the
+            # configured fps is actually reachable.
+            nodemap["DeviceLinkThroughputLimitMode"].value = "On"
             throughput_node = nodemap["DeviceLinkThroughputLimit"]
             throughput_node.value = throughput_node.max
 

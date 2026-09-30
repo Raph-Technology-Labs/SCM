@@ -34,11 +34,13 @@ class ResultProcessor:
 
     @staticmethod
     def _process_defect(session: CompanySession, part: Part, mode_result: dict, db: Session) -> dict:
-        row = PartDefect(session_id=session.id, part_id=part.part_id, defects=mode_result)
+        status = mode_result["status"]
+        boxes = mode_result.get("boxes", [])
+        row = PartDefect(session_id=session.id, part_id=part.part_id, defects=status)
         db.add(row)
-        session.overall_status = "NOK" if "NOK" in mode_result.values() else "OK"
+        session.overall_status = "NOK" if "NOK" in status.values() else "OK"
         db.commit()
-        return {"defects": mode_result, "overall_status": session.overall_status}
+        return {"defects": status, "overall_status": session.overall_status, "boxes": boxes}
 
     @staticmethod
     def _process_measurement(session: CompanySession, mode_result: dict, db: Session) -> dict:

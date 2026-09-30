@@ -70,6 +70,7 @@ class PipelineSession:
         self.processor = processor
         self.inference_engine = inference_engine
         self._lock = asyncio.Lock()  # serializes capture calls against this one session
+        self._last_frame: np.ndarray | None = None  # cached for the Capture/Infer demo split
 
     @classmethod
     async def create(cls, session_id: int, mode: str, part: Part) -> "PipelineSession":
@@ -93,6 +94,26 @@ class PipelineSession:
             result = ResultProcessor.process(self.mode, company_session, self.part, mode_result, db)
             result["frame"] = await asyncio.to_thread(_encode_frame_jpeg, frame)
             return result
+
+    async def capture_frame_only(self) -> dict:
+        """Grabs a frame and caches it, without running inference. Used by
+        Defect Detection's demo two-step Capture/Infer flow
+        (display.infer_button=true) — pairs with infer_captured_frame()."""
+        async with self._lock:
+            frame = await asyncio.to_thread(self.camera.read_frame)
+            self._last_frame = frame
+            return {"frame": await asyncio.to_thread(_encode_frame_jpeg, frame)}
+
+    async def infer_captured_frame(self, db: Session, company_session) -> dict:
+        """Runs inference on the frame cached by capture_frame_only() — the
+        second step of the Capture/Infer demo flow."""
+        async with self._lock:
+            if self._last_frame is None:
+                raise RuntimeError("No captured frame to infer on — call capture first")
+            frame = self._last_frame
+            detections = await asyncio.to_thread(self.inference_engine.infer, frame)
+            mode_result = self.processor.process(frame, detections)
+            return ResultProcessor.process(self.mode, company_session, self.part, mode_result, db)
 
     async def stop(self) -> None:
         async with self._lock:

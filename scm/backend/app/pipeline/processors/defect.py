@@ -33,13 +33,28 @@ class DefectProcessor(ModeProcessor):
         # start every configured defect slot as OK, flip to NOK if a matching
         # detection clears its confidence threshold
         result = {instance_key: "OK" for instance_key, _ in self._by_name.values()}
+        boxes: list[dict] = []
+        frame_h, frame_w = frame.shape[:2]
 
         for det in detections:
             match = self._by_name.get(det.class_name.strip().lower())
             if match is None:
                 continue
             instance_key, threshold = match
-            if det.confidence >= threshold:
-                result[instance_key] = "NOK"
+            if det.confidence < threshold:
+                continue
+            result[instance_key] = "NOK"
+            if self.cfg.display.show_bboxes:
+                x1, y1, x2, y2 = det.bbox
+                # normalized (0-1) so the frontend can overlay them on the
+                # preview JPEG regardless of what size that got downscaled to
+                boxes.append(
+                    {
+                        "instance_key": instance_key,
+                        "defect_name": det.class_name,
+                        "confidence": round(det.confidence, 4),
+                        "bbox": [x1 / frame_w, y1 / frame_h, x2 / frame_w, y2 / frame_h],
+                    }
+                )
 
-        return result
+        return {"status": result, "boxes": boxes}

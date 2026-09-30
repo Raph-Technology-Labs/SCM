@@ -63,6 +63,7 @@ class CameraConfig(BaseModel):
 class DisplayConfig(BaseModel):
     show_bboxes: bool = True
     show_count: bool = False
+    infer_button: bool = False
 
 
 class TrackingConfig(BaseModel):
@@ -81,6 +82,17 @@ class VideoSimulatorConfig(BaseModel):
 
 class ImageSimulatorConfig(BaseModel):
     enabled: bool = False
+    images_dir: str = ""
+
+
+class DefectSimulatorConfig(BaseModel):
+    """Defect Detection can simulate off either an mp4 or an image folder —
+    whichever of video_path/images_dir is non-empty wins (see
+    camera/factory.py). Set the one you want and leave the other blank."""
+
+    enabled: bool = False
+    video_path: str = ""
+    loop: bool = True
     images_dir: str = ""
 
 
@@ -103,7 +115,7 @@ class DefectDetectionConfig(BaseModel):
     camera: CameraConfig
     default_confidence_threshold: float = 0.75
     display: DisplayConfig = DisplayConfig()
-    simulator: VideoSimulatorConfig = VideoSimulatorConfig()
+    simulator: DefectSimulatorConfig = DefectSimulatorConfig()
 
 
 class MeasurementConfig(BaseModel):

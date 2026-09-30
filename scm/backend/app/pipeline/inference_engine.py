@@ -78,7 +78,7 @@ class InferenceEngine:
             raise RuntimeError("InferenceEngine model not loaded")
 
         detections: list[Detection] = []
-        for result in self._model(frame, device=self.device, verbose=False):
+        for result in self._model(frame, device=self.device, verbose=False, conf=0.2):
             for box in result.boxes:
                 class_id = int(box.cls[0])
                 class_name = self.class_map.get(class_id, self._model.names[class_id])

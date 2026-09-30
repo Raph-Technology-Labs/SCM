@@ -54,6 +54,7 @@ from app.schemas import (
 from app.services.spreadsheet_importer import SpreadsheetCsvImporter, SpreadsheetExcelImporter
 from app.services.template_builder import build_template, MODE_SLUGS
 from app.pipeline.session_pipeline import PipelineRegistry
+from app.pipeline.config import get_mode_config
 from fastapi.responses import StreamingResponse
 # from app.routers.websocket_manager import get_websocket_manager
 # from app.utils.zpl import ZPLGenerator
@@ -848,6 +849,48 @@ async def capture(session_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         logging.error(f"Capture failed for session {session_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Capture failed: {e}")
+
+
+@router.post("/session/{session_id}/capture-frame")
+async def capture_frame(session_id: int):
+    """Grabs a frame only, no inference — first step of Defect Detection's
+    demo two-step Capture/Infer flow (display.infer_button=true)."""
+    pipeline = PipelineRegistry.get(session_id)
+    if pipeline is None:
+        raise HTTPException(status_code=404, detail="No active pipeline for this session")
+
+    try:
+        return await pipeline.capture_frame_only()
+    except Exception as e:
+        logging.error(f"Capture-frame failed for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Capture failed: {e}")
+
+
+@router.post("/session/{session_id}/infer")
+async def infer(session_id: int, db: Session = Depends(get_db)):
+    """Runs inference on the frame cached by /capture-frame — second step of
+    Defect Detection's demo two-step Capture/Infer flow."""
+    pipeline = PipelineRegistry.get(session_id)
+    if pipeline is None:
+        raise HTTPException(status_code=404, detail="No active pipeline for this session")
+
+    session = db.query(CompanySession).filter(CompanySession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    try:
+        return await pipeline.infer_captured_frame(db, session)
+    except Exception as e:
+        logging.error(f"Infer failed for session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Infer failed: {e}")
+
+
+@router.get("/defect-detection/infer-button")
+def get_defect_detection_infer_button():
+    """Lets the frontend know whether Defect Detection's demo Capture/Infer
+    split (display.infer_button in machine_config.yaml) is turned on."""
+    cfg = get_mode_config("Defect Detection")
+    return {"infer_button": cfg.display.infer_button}
 
 
 @router.post("/start")

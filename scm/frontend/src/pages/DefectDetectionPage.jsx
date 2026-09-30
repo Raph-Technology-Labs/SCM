@@ -78,7 +78,12 @@ const DefectDetectionPage = () => {
   const [loadError, setLoadError] = useState(false);
   const [defectStatus, setDefectStatus] = useState({});
   const [previewFrame, setPreviewFrame] = useState(null);
+  const [boxes, setBoxes] = useState([]);
+  const [imgNatural, setImgNatural] = useState(null);
   const [capturing, setCapturing] = useState(false);
+  const [inferring, setInferring] = useState(false);
+  const [inferButtonEnabled, setInferButtonEnabled] = useState(false);
+  const [hasInferred, setHasInferred] = useState(false);
 
   const { confirm, ConfirmDialog } = useConfirmDialog();
   const { setActiveSession, clearActiveSession } = useSession();
@@ -110,6 +115,13 @@ const DefectDetectionPage = () => {
         setLoadError(true);
         toast.error(err.response?.data?.detail || `Session #${sessionId} could not be loaded`);
       });
+
+    // Demo config flag: when on, Capture only loads the image and a
+    // separate Infer button runs the model on it.
+    axios
+      .get(`${BASE_URL}/dashboard/defect-detection/infer-button`)
+      .then((res) => setInferButtonEnabled(!!res.data?.infer_button))
+      .catch(() => setInferButtonEnabled(false));
   }, [sessionId, location.state]);
 
   // One capture -> infer -> process -> result cycle per button press
@@ -120,11 +132,48 @@ const DefectDetectionPage = () => {
     try {
       const res = await axios.post(`${BASE_URL}/dashboard/session/${sessionId}/capture`);
       setDefectStatus(res.data?.defects || {});
+      setBoxes(res.data?.boxes || []);
       if (res.data?.frame) setPreviewFrame(`data:image/jpeg;base64,${res.data.frame}`);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Capture failed");
     } finally {
       setCapturing(false);
+    }
+  };
+
+  // Demo flow (infer_button=true): Capture just loads the next frame — no
+  // inference yet, so any previous result no longer applies to this image.
+  const handleCaptureFrame = async () => {
+    if (capturing) return;
+    setCapturing(true);
+    try {
+      const res = await axios.post(`${BASE_URL}/dashboard/session/${sessionId}/capture-frame`);
+      setBoxes([]);
+      setImgNatural(null);
+      setDefectStatus({});
+      setHasInferred(false);
+      if (res.data?.frame) setPreviewFrame(`data:image/jpeg;base64,${res.data.frame}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Capture failed");
+    } finally {
+      setCapturing(false);
+    }
+  };
+
+  // Demo flow (infer_button=true): runs inference on the frame Capture just
+  // loaded and paints the bbox overlay + OK/NOK result on top of it.
+  const handleInfer = async () => {
+    if (inferring || !previewFrame) return;
+    setInferring(true);
+    try {
+      const res = await axios.post(`${BASE_URL}/dashboard/session/${sessionId}/infer`);
+      setDefectStatus(res.data?.defects || {});
+      setBoxes(res.data?.boxes || []);
+      setHasInferred(true);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Infer failed");
+    } finally {
+      setInferring(false);
     }
   };
 
@@ -139,7 +188,11 @@ const DefectDetectionPage = () => {
     setStatus("RUNNING");
     setActiveSession({ sessionId: Number(sessionId), mode: "Defect Detection" });
     toast.success("Defect detection started");
-    handleCapture();
+    if (inferButtonEnabled) {
+      handleCaptureFrame();
+    } else {
+      handleCapture();
+    }
   };
 
   const stopSession = async () => {
@@ -148,6 +201,9 @@ const DefectDetectionPage = () => {
     clearActiveSession();
     setStatus("STOPPED");
     setPreviewFrame(null);
+    setBoxes([]);
+    setImgNatural(null);
+    setHasInferred(false);
   };
 
   const handleStop = async () => {
@@ -167,7 +223,7 @@ const DefectDetectionPage = () => {
       })
     : "--";
 
-  const hasRun = status !== "READY";
+  const hasRun = inferButtonEnabled ? hasInferred : status !== "READY";
   const defectRows = Object.entries(sessionInfo?.defect_parameters || {}).map(
     ([instanceKey, config]) => {
       const result = hasRun ? (defectStatus[instanceKey] ?? null) : null;
@@ -266,17 +322,61 @@ const DefectDetectionPage = () => {
             )}
 
             {status === "RUNNING" && previewFrame && (
-              <img
-                src={previewFrame}
-                alt="Live camera feed"
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "contain",
-                }}
-              />
+              <>
+                <img
+                  src={previewFrame}
+                  alt="Live camera feed"
+                  onLoad={(e) =>
+                    setImgNatural({ w: e.target.naturalWidth, h: e.target.naturalHeight })
+                  }
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "contain",
+                  }}
+                />
+                {imgNatural && boxes.length > 0 && (
+                  <svg
+                    viewBox={`0 0 ${imgNatural.w} ${imgNatural.h}`}
+                    preserveAspectRatio="xMidYMid meet"
+                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+                  >
+                    {boxes.map((box, idx) => {
+                      const [x1, y1, x2, y2] = box.bbox;
+                      const bx = x1 * imgNatural.w;
+                      const by = y1 * imgNatural.h;
+                      const bw = (x2 - x1) * imgNatural.w;
+                      const bh = (y2 - y1) * imgNatural.h;
+                      const strokeWidth = Math.max(imgNatural.w, imgNatural.h) / 250;
+                      const fontSize = Math.max(imgNatural.w, imgNatural.h) / 35;
+                      return (
+                        <g key={idx}>
+                          <rect
+                            x={bx}
+                            y={by}
+                            width={bw}
+                            height={bh}
+                            fill="none"
+                            stroke="#FF1133"
+                            strokeWidth={strokeWidth}
+                          />
+                          <text
+                            x={bx}
+                            y={Math.max(fontSize, by - strokeWidth)}
+                            fill="#FF1133"
+                            fontSize={fontSize}
+                            fontWeight={700}
+                          >
+                            {box.defect_name} {(box.confidence * 100).toFixed(0)}%
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+                )}
+              </>
             )}
 
             {!(status === "RUNNING" && previewFrame) && (
@@ -327,11 +427,29 @@ const DefectDetectionPage = () => {
                 boxShadow: "none",
                 "&:hover": { boxShadow: 2 },
               }}
-              onClick={status === "READY" ? handleStart : handleCapture}
+              onClick={status === "READY" ? handleStart : inferButtonEnabled ? handleCaptureFrame : handleCapture}
               disabled={status === "STOPPED" || capturing || !sessionInfo}
             >
               {status === "READY" ? "Start" : capturing ? "Capturing…" : "Capture"}
             </Button>
+            {inferButtonEnabled && (
+              <Button
+                variant="contained"
+                color="secondary"
+                startIcon={<PlayArrowIcon />}
+                sx={{
+                  width: { xs: "100%", sm: 160 },
+                  height: 48,
+                  fontWeight: 700,
+                  boxShadow: "none",
+                  "&:hover": { boxShadow: 2 },
+                }}
+                onClick={handleInfer}
+                disabled={status !== "RUNNING" || !previewFrame || inferring}
+              >
+                {inferring ? "Inferring…" : "Infer"}
+              </Button>
+            )}
             <Button
               variant="contained"
               color="error"
@@ -443,7 +561,7 @@ const DefectDetectionPage = () => {
                 <Box
                   sx={{
                     display: "grid",
-                    gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr",
+                    gridTemplateColumns: "2fr 1fr 1fr 1fr",
                     px: 1,
                     pb: 1,
                     mb: 1,
@@ -454,9 +572,9 @@ const DefectDetectionPage = () => {
                   <Typography variant="caption" sx={{ fontWeight: 700, color: "text.secondary" }}>
                     Defect Type
                   </Typography>
-                  <Typography variant="caption" sx={{ fontWeight: 700, color: "text.secondary" }}>
+                  {/* <Typography variant="caption" sx={{ fontWeight: 700, color: "text.secondary" }}>
                     Threshold
-                  </Typography>
+                  </Typography> */}
                   <Typography variant="caption" sx={{ fontWeight: 700, color: "text.secondary" }}>
                     Camera
                   </Typography>
@@ -479,7 +597,7 @@ const DefectDetectionPage = () => {
                     key={row.name}
                     sx={{
                       display: "grid",
-                      gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr",
+                      gridTemplateColumns: "2fr 1fr 1fr 1fr",
                       alignItems: "center",
                       px: 1,
                       py: 0.8,
@@ -490,9 +608,9 @@ const DefectDetectionPage = () => {
                     <Typography variant="body2" sx={{ fontWeight: 500 }}>
                       {row.name}
                     </Typography>
-                    <Typography variant="body2" color="text.secondary">
+                    {/* <Typography variant="body2" color="text.secondary">
                       {row.threshold != null ? row.threshold : "—"}
-                    </Typography>
+                    </Typography> */}
                     <Typography variant="body2" color="text.secondary">
                       {row.camera != null ? row.camera : "—"}
                     </Typography>

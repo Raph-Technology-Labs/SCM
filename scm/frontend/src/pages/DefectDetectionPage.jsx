@@ -99,25 +99,26 @@ const DefectDetectionPage = () => {
         session_start: new Date().toISOString(),
         defect_parameters: forwarded.defect_parameters || null,
       });
-      return;
+    } else {
+      axios
+        .get(`${BASE_URL}/dashboard/session/${sessionId}/details`)
+        .then(async (res) => {
+          const part = await axios.get(`${BASE_URL}/dashboard/part-details`, {
+            params: { part_code: res.data.part_code },
+          });
+          setSessionInfo({ ...res.data, defect_parameters: part.data.defect_parameters });
+          setLoadError(false);
+        })
+        .catch((err) => {
+          setLoadError(true);
+          toast.error(err.response?.data?.detail || `Session #${sessionId} could not be loaded`);
+        });
     }
 
-    axios
-      .get(`${BASE_URL}/dashboard/session/${sessionId}/details`)
-      .then(async (res) => {
-        const part = await axios.get(`${BASE_URL}/dashboard/part-details`, {
-          params: { part_code: res.data.part_code },
-        });
-        setSessionInfo({ ...res.data, defect_parameters: part.data.defect_parameters });
-        setLoadError(false);
-      })
-      .catch((err) => {
-        setLoadError(true);
-        toast.error(err.response?.data?.detail || `Session #${sessionId} could not be loaded`);
-      });
-
     // Demo config flag: when on, Capture only loads the image and a
-    // separate Infer button runs the model on it.
+    // separate Infer button runs the model on it. Fetched unconditionally
+    // (not gated behind the forwarded-state branch above) since that's the
+    // normal navigation path in from Part Selection.
     axios
       .get(`${BASE_URL}/dashboard/defect-detection/infer-button`)
       .then((res) => setInferButtonEnabled(!!res.data?.infer_button))
